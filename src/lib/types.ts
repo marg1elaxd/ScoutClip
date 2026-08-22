@@ -1,9 +1,21 @@
-/** Crop rectangle in *device pixels*, matching the tabCapture video track's actual frame size. */
+/**
+ * Selected crop rectangle as a **fraction (0–1) of the tab's rendered
+ * viewport**, not absolute pixels. Converted to real pixel coordinates at
+ * crop time using the tabCapture video track's own reported dimensions
+ * (`MediaStreamTrack.getSettings()`), not derived from the page's own
+ * `window.innerWidth/innerHeight * devicePixelRatio` the way an earlier
+ * version did — there's no guarantee tabCapture's delivered frame
+ * resolution exactly equals that, and assuming so caused a real,
+ * reproducible offset (the crop consistently landing shifted from where it
+ * was actually selected, even at 100% Windows display scaling). Working in
+ * ratios and resolving against the track's own ground-truth dimensions
+ * removes that assumption entirely, regardless of what actually caused it.
+ */
 export interface CaptureRegion {
-  x: number
-  y: number
-  width: number
-  height: number
+  xRatio: number
+  yRatio: number
+  widthRatio: number
+  heightRatio: number
 }
 
 /** A clip that has actually finished saving to disk, for the in-match clip list. */

@@ -91,12 +91,35 @@ function pickSupportedMimeType(): string {
  * request just a rectangle. To record only the match video, redraw just
  * that rectangle of every incoming frame onto a canvas via drawImage's
  * source-rect cropping, then record canvas.captureStream() instead of the
- * raw stream. `region` is in device pixels, matching the tabCapture video
- * track's actual frame size (see regionPicker.ts).
+ * raw stream.
+ *
+ * `region` is a fraction of the *page's* viewport (see CaptureRegion's doc
+ * comment in types.ts) — resolved here against `videoTrack.getSettings()`,
+ * the capture stream's own reported width/height, rather than assumed to
+ * equal `window.innerWidth/innerHeight * devicePixelRatio`. That assumption
+ * doesn't reliably hold (tabCapture's delivered resolution isn't guaranteed
+ * to exactly match the page's own layout metrics) and produced a real,
+ * reproducible offset between the selected and actually-recorded rectangle.
+ * `getSettings()` reports the track's actual dimensions synchronously, no
+ * need to wait for the `<video>` element to start playing frames.
  */
 function cropStreamToRegion(source: MediaStream, region: CaptureRegion): MediaStream {
   const videoTrack = source.getVideoTracks()[0]
   if (!videoTrack) return source
+
+  const trackSettings = videoTrack.getSettings()
+  const frameWidth = trackSettings.width
+  const frameHeight = trackSettings.height
+  if (!frameWidth || !frameHeight) {
+    console.error('[offscreen] capture track reported no frame size — recording full tab instead of the selected region')
+    return source
+  }
+  const pixelRegion = {
+    x: Math.round(region.xRatio * frameWidth),
+    y: Math.round(region.yRatio * frameHeight),
+    width: Math.round(region.widthRatio * frameWidth),
+    height: Math.round(region.heightRatio * frameHeight),
+  }
 
   cropVideoEl = document.createElement('video')
   cropVideoEl.muted = true
@@ -108,8 +131,8 @@ function cropStreamToRegion(source: MediaStream, region: CaptureRegion): MediaSt
   cropVideoEl.play().catch(() => {})
 
   cropCanvas = document.createElement('canvas')
-  cropCanvas.width = region.width
-  cropCanvas.height = region.height
+  cropCanvas.width = pixelRegion.width
+  cropCanvas.height = pixelRegion.height
   const ctx = cropCanvas.getContext('2d')
 
   // requestAnimationFrame does NOT reliably fire in offscreen documents —
@@ -120,7 +143,17 @@ function cropStreamToRegion(source: MediaStream, region: CaptureRegion): MediaSt
   const draw = () => {
     if (!cropVideoEl || !ctx) return
     if (cropVideoEl.readyState >= 2) {
-      ctx.drawImage(cropVideoEl, region.x, region.y, region.width, region.height, 0, 0, region.width, region.height)
+      ctx.drawImage(
+        cropVideoEl,
+        pixelRegion.x,
+        pixelRegion.y,
+        pixelRegion.width,
+        pixelRegion.height,
+        0,
+        0,
+        pixelRegion.width,
+        pixelRegion.height,
+      )
     }
   }
   cropIntervalId = setInterval(draw, 1000 / CROP_FPS)
@@ -165,7 +198,11 @@ async function ensureStreamReady(streamId: string, region: CaptureRegion | null,
 
   recordStream = region ? cropStreamToRegion(stream, region) : stream
   streamMimeType = pickSupportedMimeType()
-  console.log('[offscreen] stream ready —', region ? `${region.width}x${region.height} crop` : 'full tab', streamMimeType)
+  console.log(
+    '[offscreen] stream ready —',
+    region ? `${Math.round(region.widthRatio * 100)}%×${Math.round(region.heightRatio * 100)}% crop` : 'full tab',
+    streamMimeType,
+  )
 }
 
 /** Only safe to call once nothing — no standby, no active session — still needs the stream. */

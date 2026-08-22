@@ -342,7 +342,7 @@ export default function App() {
         </div>
         <div className="status-line">
           {state.draftCaptureRegion
-            ? `Region: ${state.draftCaptureRegion.width}×${state.draftCaptureRegion.height}px — only this area will be recorded. Reopen this popup after selecting to see it confirmed here.`
+            ? `Region: ${Math.round(state.draftCaptureRegion.widthRatio * 100)}%×${Math.round(state.draftCaptureRegion.heightRatio * 100)}% of the tab — only this area will be recorded. Reopen this popup after selecting to see it confirmed here.`
             : 'No region selected — the full tab will be recorded. Selecting one closes this popup — reopen it afterward to continue.'}
         </div>
 
@@ -569,7 +569,7 @@ export default function App() {
           <div className="clock-row">
             <span>
               {match.captureRegion
-                ? `Region: ${match.captureRegion.width}×${match.captureRegion.height}px`
+                ? `Region: ${Math.round(match.captureRegion.widthRatio * 100)}%×${Math.round(match.captureRegion.heightRatio * 100)}% of tab`
                 : 'Recording full tab'}
             </span>
             <button disabled={regionPickerBusy || anyPlayerBusy} onClick={handleOpenRegionPicker}>

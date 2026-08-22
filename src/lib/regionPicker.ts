@@ -14,8 +14,6 @@
  * The popup picks the result up on its next GET_STATE (e.g. when reopened).
  */
 export function regionPickerOverlay(): void {
-  const dpr = window.devicePixelRatio || 1
-
   const overlay = document.createElement('div')
   overlay.style.cssText = 'position:fixed;inset:0;z-index:2147483647;cursor:crosshair;background:rgba(0,0,0,0.35);'
 
@@ -83,13 +81,18 @@ export function regionPickerOverlay(): void {
       e.preventDefault()
       e.stopPropagation()
       cleanup()
+      // Expressed as a fraction of the viewport, not absolute/device pixels
+      // — see CaptureRegion's doc comment for why. window.innerWidth/Height
+      // are viewport CSS pixels, matching the clientX/clientY the box was
+      // dragged in, so this ratio is exactly "how far across/down the
+      // visible tab" regardless of zoom or device pixel ratio.
       chrome.runtime.sendMessage({
         type: 'SET_CAPTURE_REGION',
         region: {
-          x: Math.round(currentRect.x * dpr),
-          y: Math.round(currentRect.y * dpr),
-          width: Math.round(currentRect.width * dpr),
-          height: Math.round(currentRect.height * dpr),
+          xRatio: currentRect.x / window.innerWidth,
+          yRatio: currentRect.y / window.innerHeight,
+          widthRatio: currentRect.width / window.innerWidth,
+          heightRatio: currentRect.height / window.innerHeight,
         },
       })
     }

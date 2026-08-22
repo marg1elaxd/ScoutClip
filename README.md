@@ -587,9 +587,19 @@ capture, not instead of it:
    ([src/lib/regionPicker.ts](src/lib/regionPicker.ts)) into the *currently
    active tab* via `chrome.scripting.executeScript`. The scout drags a box
    over the video player and presses Enter to confirm (Esc cancels).
-2. The selected rectangle — converted to device pixels via
-   `window.devicePixelRatio`, so it lines up with the actual frame size of
-   the tabCapture video track — is sent with `chrome.runtime.sendMessage`
+2. The selected rectangle is stored as a **fraction (0–1) of the tab's
+   viewport** (`xRatio`/`yRatio`/`widthRatio`/`heightRatio`), not absolute
+   pixels — an earlier version converted to device pixels via
+   `window.devicePixelRatio` on the assumption that would exactly match the
+   tabCapture video track's actual frame resolution. That assumption caused
+   a real, reproducible bug: the recorded crop consistently landed offset
+   from where it was actually selected, even at 100% display scaling —
+   there's just no guarantee tabCapture's delivered resolution equals
+   `innerWidth/innerHeight * devicePixelRatio`. Working in ratios sidesteps
+   the question of what that resolution actually is; the ratio gets resolved
+   against the capture track's own real dimensions
+   (`MediaStreamTrack.getSettings()`) at crop time instead — see point 4.
+   It's sent with `chrome.runtime.sendMessage`
    **directly from the injected overlay to the background service worker**,
    not back to the popup that triggered it. This isn't optional: dragging on
    the page means clicking into that tab, and Chrome auto-closes the
@@ -603,8 +613,12 @@ capture, not instead of it:
    in a separate `draftCaptureRegion` — background state, not popup-local
    React state, for the same reason as point 2. `START_MATCH` folds it into
    the new match's `captureRegion` once the scout actually starts the match.
-4. If `captureRegion` is set, the offscreen document redraws just that
-   rectangle of every incoming frame onto a hidden `<canvas>`
+4. If `captureRegion` is set, the offscreen document first resolves the
+   stored ratio into actual pixel coordinates using the capture track's own
+   `getSettings().width/height` — the ground truth for what resolution
+   tabCapture is actually delivering, rather than a value assumed from the
+   page's own layout metrics — then redraws just that rectangle of every
+   incoming frame onto a hidden `<canvas>`
    (`cropStreamToRegion` in [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts))
    and records `canvas.captureStream()` instead of the raw stream — audio
    passes through unmodified, only video is cropped. `null` records the
