@@ -5,17 +5,25 @@
  * (`MediaStreamTrack.getSettings()`), not derived from the page's own
  * `window.innerWidth/innerHeight * devicePixelRatio` the way an earlier
  * version did — there's no guarantee tabCapture's delivered frame
- * resolution exactly equals that, and assuming so caused a real,
- * reproducible offset (the crop consistently landing shifted from where it
- * was actually selected, even at 100% Windows display scaling). Working in
- * ratios and resolving against the track's own ground-truth dimensions
- * removes that assumption entirely, regardless of what actually caused it.
+ * resolution exactly equals that.
+ *
+ * It very much doesn't, in fact: measured live, a 1912×948 page was
+ * captured into a fixed 1920×1080 frame — a different aspect ratio
+ * entirely, meaning tabCapture fits the page into that frame
+ * ("contain"-style scaling) and pads whichever axis doesn't fill it, rather
+ * than capturing 1:1 at the page's own resolution. `viewportWidth`/
+ * `viewportHeight` (the page's own dimensions at selection time) are kept
+ * alongside the ratios so `cropStreamToRegion` in offscreen.ts can work out
+ * where those padding bars actually are and map the ratio onto the real
+ * content rectangle inside the frame, not the frame's outer edges.
  */
 export interface CaptureRegion {
   xRatio: number
   yRatio: number
   widthRatio: number
   heightRatio: number
+  viewportWidth: number
+  viewportHeight: number
 }
 
 /** A clip that has actually finished saving to disk, for the in-match clip list. */

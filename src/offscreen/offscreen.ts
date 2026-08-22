@@ -114,12 +114,51 @@ function cropStreamToRegion(source: MediaStream, region: CaptureRegion): MediaSt
     console.error('[offscreen] capture track reported no frame size — recording full tab instead of the selected region')
     return source
   }
-  const pixelRegion = {
-    x: Math.round(region.xRatio * frameWidth),
-    y: Math.round(region.yRatio * frameHeight),
-    width: Math.round(region.widthRatio * frameWidth),
-    height: Math.round(region.heightRatio * frameHeight),
+
+  // tabCapture doesn't necessarily deliver frames at the page's own
+  // resolution — measured live, a 1912x948 page came through as a fixed
+  // 1920x1080 frame, a different aspect ratio entirely. That means the page
+  // is fit into the frame ("contain"-style — scaled to fill one axis,
+  // letterboxed/pillarboxed on the other) rather than mapping 1:1, so the
+  // selection ratio has to be resolved against the actual *content*
+  // rectangle within the frame, not the frame's outer edges, or it lands
+  // offset by however big the padding bars are.
+  const pageAspect = region.viewportWidth / region.viewportHeight
+  const frameAspect = frameWidth / frameHeight
+  let contentWidth: number
+  let contentHeight: number
+  let contentLeft: number
+  let contentTop: number
+  if (pageAspect > frameAspect) {
+    // Page is proportionally wider than the frame — fit to width, pad top/bottom.
+    contentWidth = frameWidth
+    contentHeight = frameWidth / pageAspect
+    contentLeft = 0
+    contentTop = (frameHeight - contentHeight) / 2
+  } else {
+    // Page is proportionally taller/narrower than the frame — fit to height, pad left/right.
+    contentHeight = frameHeight
+    contentWidth = frameHeight * pageAspect
+    contentTop = 0
+    contentLeft = (frameWidth - contentWidth) / 2
   }
+
+  const pixelRegion = {
+    x: Math.round(contentLeft + region.xRatio * contentWidth),
+    y: Math.round(contentTop + region.yRatio * contentHeight),
+    width: Math.round(region.widthRatio * contentWidth),
+    height: Math.round(region.heightRatio * contentHeight),
+  }
+  console.log('[offscreen] crop region resolved —', {
+    region,
+    frameWidth,
+    frameHeight,
+    contentLeft,
+    contentTop,
+    contentWidth,
+    contentHeight,
+    pixelRegion,
+  })
 
   cropVideoEl = document.createElement('video')
   cropVideoEl.muted = true

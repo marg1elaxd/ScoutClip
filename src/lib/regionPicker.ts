@@ -86,6 +86,12 @@ export function regionPickerOverlay(): void {
       // are viewport CSS pixels, matching the clientX/clientY the box was
       // dragged in, so this ratio is exactly "how far across/down the
       // visible tab" regardless of zoom or device pixel ratio.
+      console.log('[regionPicker] selection —', {
+        currentRect,
+        innerWidth: window.innerWidth,
+        innerHeight: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio,
+      })
       chrome.runtime.sendMessage({
         type: 'SET_CAPTURE_REGION',
         region: {
@@ -93,6 +99,11 @@ export function regionPickerOverlay(): void {
           yRatio: currentRect.y / window.innerHeight,
           widthRatio: currentRect.width / window.innerWidth,
           heightRatio: currentRect.height / window.innerHeight,
+          // Carried through so the crop step can work out where any
+          // letterbox/pillarbox padding actually is — see CaptureRegion's
+          // doc comment in types.ts.
+          viewportWidth: window.innerWidth,
+          viewportHeight: window.innerHeight,
         },
       })
     }

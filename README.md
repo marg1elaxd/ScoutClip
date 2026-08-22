@@ -595,10 +595,11 @@ capture, not instead of it:
    a real, reproducible bug: the recorded crop consistently landed offset
    from where it was actually selected, even at 100% display scaling —
    there's just no guarantee tabCapture's delivered resolution equals
-   `innerWidth/innerHeight * devicePixelRatio`. Working in ratios sidesteps
-   the question of what that resolution actually is; the ratio gets resolved
-   against the capture track's own real dimensions
-   (`MediaStreamTrack.getSettings()`) at crop time instead — see point 4.
+   `innerWidth/innerHeight * devicePixelRatio` — nor, as it turned out, does
+   it even share the same *aspect ratio* as the page. Working in ratios
+   sidesteps the question of what that resolution actually is; the ratio
+   gets resolved against the capture track's own real dimensions at crop
+   time instead, accounting for letterbox/pillarbox padding — see point 4.
    It's sent with `chrome.runtime.sendMessage`
    **directly from the injected overlay to the background service worker**,
    not back to the popup that triggered it. This isn't optional: dragging on
@@ -613,12 +614,25 @@ capture, not instead of it:
    in a separate `draftCaptureRegion` — background state, not popup-local
    React state, for the same reason as point 2. `START_MATCH` folds it into
    the new match's `captureRegion` once the scout actually starts the match.
-4. If `captureRegion` is set, the offscreen document first resolves the
-   stored ratio into actual pixel coordinates using the capture track's own
+4. If `captureRegion` is set, the offscreen document resolves the stored
+   ratio into actual pixel coordinates using the capture track's own
    `getSettings().width/height` — the ground truth for what resolution
    tabCapture is actually delivering, rather than a value assumed from the
-   page's own layout metrics — then redraws just that rectangle of every
-   incoming frame onto a hidden `<canvas>`
+   page's own layout metrics. That resolution turned out to matter more than
+   expected: measured live, a 1912×948 page came through as a fixed
+   1920×1080 capture frame — a *different aspect ratio entirely* — so
+   tabCapture isn't capturing 1:1 at the page's own resolution, it's fitting
+   the page into that frame ("contain"-style scaling) and padding whichever
+   axis doesn't fill it. Mapping the selection ratio straight onto the raw
+   frame dimensions (an earlier attempt at this fix) ignored that padding
+   and still landed offset by however big the bars were — purely vertically
+   in this case, since a page proportionally wider than 16:9 gets padded
+   top/bottom. `cropStreamToRegion` now compares the page's aspect ratio
+   (`viewportWidth`/`viewportHeight`, carried through from selection time)
+   against the frame's, works out which axis is padded and by how much, and
+   maps the ratio onto that inner content rectangle instead of the frame's
+   outer edges — then redraws just that rectangle of every incoming frame
+   onto a hidden `<canvas>`
    (`cropStreamToRegion` in [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts))
    and records `canvas.captureStream()` instead of the raw stream — audio
    passes through unmodified, only video is cropped. `null` records the
