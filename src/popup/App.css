@@ -139,6 +139,66 @@ button:disabled {
   font-weight: 600;
 }
 
+.player-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.player-record-row {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 4px;
+}
+
+.player-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.player-chip.live {
+  background: #d1453b;
+  border-color: #d1453b;
+  color: white;
+  font-weight: 600;
+}
+
+.player-chip.busy {
+  opacity: 0.6;
+}
+
+.rec-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: white;
+  flex-shrink: 0;
+  animation: rec-pulse 1.2s infinite;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.status-line.inline {
+  margin-top: 0;
+}
+
+.tag-panel.inline {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 0;
+}
+
 .tag-chip {
   display: inline-flex;
   align-items: center;

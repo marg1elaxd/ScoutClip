@@ -26,7 +26,6 @@ export interface SavedClip {
 export interface MatchState {
   matchInfo: string
   players: string[]
-  selectedPlayer: string | null
   clockRunning: boolean
   /** ms elapsed accumulated across previous run segments (excludes the current running segment) */
   elapsedMs: number
@@ -44,7 +43,12 @@ export interface MatchState {
 /** Common playback-speed increments a broadcast is likely to be watched at. */
 export const GAME_SPEED_OPTIONS = [1, 1.25, 1.5, 1.75, 2]
 
-/** 'stopping' = post-roll delay running after Stop was clicked, before the clip is final. */
+/**
+ * Per-player, not global — multiple players can be at different points of
+ * this at once (see StateSnapshot.playerRecordingStatus in messages.ts).
+ * 'stopping' = post-roll delay running after that player's Stop was clicked,
+ * before their clip is final.
+ */
 export type RecordingStatus = 'idle' | 'recording' | 'stopping' | 'pending-tag' | 'saving'
 
 export interface PendingClip {

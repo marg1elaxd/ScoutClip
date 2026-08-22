@@ -29,7 +29,6 @@ function defaultMatch(): MatchState {
   return {
     matchInfo: '',
     players: [],
-    selectedPlayer: null,
     clockRunning: false,
     elapsedMs: 0,
     runningSinceMs: null,
@@ -41,15 +40,19 @@ function defaultMatch(): MatchState {
 }
 
 let match: MatchState = defaultMatch()
-let recordingStatus: RecordingStatus = 'idle'
+// Keyed by player name — multiple players can be at different points of the
+// record/tag/save flow at once, so this replaced a single global status.
+// A player absent from this map (or explicitly 'idle') is not recording.
+let playerRecordingStatus: Record<string, RecordingStatus> = {}
 let lastSavedPath: string | null = null
 let lastCompilationPath: string | null = null
-let pendingClip: PendingClip | null = null
+// Keyed by player name, same reasoning as playerRecordingStatus.
+let pendingClips: Record<string, PendingClip> = {}
 // Staged region selected before a match exists to attach it to (the picker
 // is triggered from the Setup screen, before START_MATCH). Popup-local React
 // state can't hold this either — the popup necessarily closes the instant
 // the scout clicks into the broadcast tab to drag the selection box, so this
-// has to live somewhere that survives that, same reasoning as recordingStatus.
+// has to live somewhere that survives that, same reasoning as playerRecordingStatus.
 let draftCaptureRegion: CaptureRegion | null = null
 // Per-user preference, not match-scoped — persisted separately in
 // chrome.storage.local (survives across matches/browser restarts, unlike
@@ -66,21 +69,22 @@ let standbyArmed = false
 let matchTabId: number | null = null
 let hydrated = false
 
-// Persisting recordingStatus/pendingClip (not just match) matters: this MV3
-// service worker can be evicted and restarted by Chrome at any time. Without
-// this, a restart while a clip was awaiting a tag would reset recordingStatus
-// to 'idle' even though the offscreen document still held that clip's bytes
-// in memory — the popup would show an idle Record button with no sign the
-// old clip existed, and it would be silently lost the next time a recording
-// started. See also the belt-and-suspenders check in START_RECORDING.
+// Persisting playerRecordingStatus/pendingClips (not just match) matters:
+// this MV3 service worker can be evicted and restarted by Chrome at any
+// time. Without this, a restart while a clip was awaiting a tag would reset
+// that player's status to 'idle' even though the offscreen document still
+// held that clip's bytes in memory — the popup would show an idle chip with
+// no sign the old clip existed, and it would be silently lost the next time
+// a recording started for that player. See also the belt-and-suspenders
+// check in START_RECORDING.
 async function ensureHydrated() {
   if (hydrated) return
   hydrated = true
   const [stored, storedLocal] = await Promise.all([
     chrome.storage.session.get([
       'match',
-      'recordingStatus',
-      'pendingClip',
+      'playerRecordingStatus',
+      'pendingClips',
       'lastSavedPath',
       'lastCompilationPath',
       'draftCaptureRegion',
@@ -90,8 +94,8 @@ async function ensureHydrated() {
     chrome.storage.local.get('settings'),
   ])
   if (stored.match) match = stored.match as MatchState
-  if (stored.recordingStatus) recordingStatus = stored.recordingStatus as RecordingStatus
-  if (stored.pendingClip !== undefined) pendingClip = stored.pendingClip as PendingClip | null
+  if (stored.playerRecordingStatus) playerRecordingStatus = stored.playerRecordingStatus as Record<string, RecordingStatus>
+  if (stored.pendingClips) pendingClips = stored.pendingClips as Record<string, PendingClip>
   if (stored.lastSavedPath !== undefined) lastSavedPath = stored.lastSavedPath as string | null
   if (stored.lastCompilationPath !== undefined) lastCompilationPath = stored.lastCompilationPath as string | null
   if (stored.draftCaptureRegion !== undefined) draftCaptureRegion = stored.draftCaptureRegion as CaptureRegion | null
@@ -103,14 +107,19 @@ async function ensureHydrated() {
 function persist() {
   chrome.storage.session.set({
     match,
-    recordingStatus,
-    pendingClip,
+    playerRecordingStatus,
+    pendingClips,
     lastSavedPath,
     lastCompilationPath,
     draftCaptureRegion,
     standbyArmed,
     matchTabId,
   })
+}
+
+/** Whether any player currently has a recording in flight (not idle, not merely awaiting a tag) — gates operations that need the shared capture stream to stand still, like switching the broadcast tab. */
+function anyPlayerBusy(): boolean {
+  return Object.values(playerRecordingStatus).some((s) => s === 'recording' || s === 'stopping' || s === 'saving')
 }
 
 function currentMinute(): number {
@@ -121,7 +130,7 @@ function currentMinute(): number {
 function snapshot(): StateSnapshot {
   return {
     match,
-    recordingStatus,
+    playerRecordingStatus,
     currentMinute: currentMinute(),
     lastSavedPath,
     lastCompilationPath,
@@ -178,6 +187,7 @@ async function finalizePendingClip(clip: PendingClip, actionType: string | null)
     // downloads directly from that URL.
     const { url, mimeType, clipId } = await sendToOffscreen<{ url: string; mimeType: string; clipId: string }>({
       type: 'OFFSCREEN_GET_CLIP',
+      sessionId: clip.playerName,
     })
     clipUrl = url
     // Per-player, not global — two different players recording in the same
@@ -266,6 +276,8 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         captureRegion: draftCaptureRegion,
         gameSpeed: message.gameSpeed || 1,
       }
+      playerRecordingStatus = {}
+      pendingClips = {}
       matchTabId = message.tabId ?? null
       draftCaptureRegion = null
       persist()
@@ -279,16 +291,11 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       }
       return snapshot()
 
-    case 'SELECT_PLAYER':
-      match = { ...match, selectedPlayer: message.playerName }
-      persist()
-      return snapshot()
-
     case 'ADD_PLAYER': {
       const name = message.playerName.trim()
       if (!name) throw new Error('Player name cannot be empty.')
       const players = match.players.includes(name) ? match.players : [...match.players, name]
-      match = { ...match, players, selectedPlayer: name }
+      match = { ...match, players }
       persist()
       return snapshot()
     }
@@ -354,8 +361,8 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
 
     case 'PREPARE_TAB_SWITCH': {
       if (!match.matchActive) throw new Error('No match is running.')
-      if (recordingStatus === 'recording' || recordingStatus === 'saving') {
-        throw new Error('Stop the current recording before switching tabs.')
+      if (anyPlayerBusy()) {
+        throw new Error('Stop all current recordings before switching tabs.')
       }
       // Must fully complete before the popup requests a streamId for the
       // new tab — Chrome only allows one active tabCapture stream per
@@ -375,8 +382,8 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
 
     case 'RETARGET_BROADCAST_TAB': {
       if (!match.matchActive) throw new Error('No match is running.')
-      if (recordingStatus === 'recording' || recordingStatus === 'saving') {
-        throw new Error('Stop the current recording before switching tabs.')
+      if (anyPlayerBusy()) {
+        throw new Error('Stop all current recordings before switching tabs.')
       }
       const oldTabId = matchTabId
 
@@ -435,40 +442,45 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       return snapshot()
 
     case 'START_RECORDING': {
-      if (!match.selectedPlayer) throw new Error('Select a player before recording.')
+      const playerName = message.playerName
+      if (!match.players.includes(playerName)) throw new Error('Unknown player.')
+      if ((playerRecordingStatus[playerName] ?? 'idle') !== 'idle') {
+        throw new Error(`${playerName} is already recording or awaiting a tag.`)
+      }
       if (settings.preRollEnabled && !standbyArmed) {
         throw new Error('Pre-roll is enabled but not armed yet — check Settings, or start a new match to re-arm it.')
       }
 
-      // Normally unreachable through the popup UI (the Record button is
-      // disabled while a clip is pending a tag), but this state worker can
-      // be evicted/restarted mid-flow, or the offscreen document reloaded —
+      // Normally unreachable through the UI (a player's chip is disabled
+      // while their clip is pending a tag), but this state worker can be
+      // evicted/restarted mid-flow, or the offscreen document reloaded —
       // don't let an old clip silently vanish under a new recording.
-      if (pendingClip) {
+      if (pendingClips[playerName]) {
         console.warn('[background] starting a new recording with an unresolved pending clip — auto-saving it as Untagged')
-        const orphan = pendingClip
+        const orphan = pendingClips[playerName]
         try {
           await finalizePendingClip(orphan, null)
         } catch (err) {
           console.error('[background] could not recover orphaned pending clip', err)
         }
-        pendingClip = null
+        delete pendingClips[playerName]
       }
 
-      pendingClip = { playerName: match.selectedPlayer, matchInfo: match.matchInfo, minute: currentMinute() }
+      pendingClips[playerName] = { playerName, matchInfo: match.matchInfo, minute: currentMinute() }
       await ensureOffscreenDocument()
-      recordingStatus = 'recording'
+      playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'recording' }
       persist()
       try {
-        if (settings.preRollEnabled && standbyArmed) {
-          // No streamId needed — this promotes the already-armed standby
-          // buffer instead of starting a fresh capture.
-          await sendToOffscreen({
-            type: 'OFFSCREEN_START',
-            viaPromotion: true,
-            preRollSeconds: settings.preRollSeconds,
-          })
-        } else {
+        // Pre-roll needs no streamId — the shared capture stream is already
+        // open from arming, and this just starts an independent recorder on
+        // it (see startSession in offscreen.ts). Without pre-roll, a
+        // streamId is fetched, but it's ignored by the offscreen document if
+        // the stream's already open for another concurrently-recording
+        // player — only the very first recorder of the match (or since the
+        // stream was last torn down) actually needs it.
+        const usePreRoll = settings.preRollEnabled && standbyArmed
+        let streamId: string | undefined
+        if (!usePreRoll) {
           // The popup fetches this itself (a genuine click-handler user
           // gesture). Content scripts can't call chrome.tabCapture at all,
           // so the on-page overlay omits streamId and this resolves it here
@@ -476,18 +488,19 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
           // populated for messages from a tab-associated context (content
           // scripts), never for popup messages, so this path is naturally
           // unreachable for popup-originated calls.
-          const streamId = message.streamId ?? (await resolveStreamIdForTab(sender?.tab?.id))
-          await sendToOffscreen({
-            type: 'OFFSCREEN_START',
-            viaPromotion: false,
-            streamId,
-            videoBitsPerSecond: RECORDING_PROFILE.videoBitsPerSecond,
-            region: match.captureRegion,
-          })
+          streamId = message.streamId ?? (await resolveStreamIdForTab(sender?.tab?.id))
         }
+        await sendToOffscreen({
+          type: 'OFFSCREEN_START',
+          sessionId: playerName,
+          streamId,
+          videoBitsPerSecond: RECORDING_PROFILE.videoBitsPerSecond,
+          region: match.captureRegion,
+          preRollSeconds: usePreRoll ? settings.preRollSeconds : 0,
+        })
       } catch (err) {
-        recordingStatus = 'idle'
-        pendingClip = null
+        playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'idle' }
+        delete pendingClips[playerName]
         persist()
         throw err
       }
@@ -495,33 +508,42 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
     }
 
     case 'STOP_RECORDING': {
+      const playerName = message.playerName
+      if (playerRecordingStatus[playerName] !== 'recording') {
+        throw new Error(`${playerName} is not currently recording.`)
+      }
       const postRollMs = settings.postRollEnabled ? settings.postRollSeconds * 1000 : 0
+      playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'stopping' }
+      persist()
       try {
-        await sendToOffscreen({ type: 'OFFSCREEN_STOP', postRollMs, gameSpeed: match.gameSpeed })
+        await sendToOffscreen({ type: 'OFFSCREEN_STOP', sessionId: playerName, postRollMs, gameSpeed: match.gameSpeed })
       } catch (err) {
-        recordingStatus = 'idle'
+        playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'idle' }
+        delete pendingClips[playerName]
         persist()
         throw err
       }
-      recordingStatus = 'pending-tag'
+      playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'pending-tag' }
       persist()
       return snapshot()
     }
 
     case 'CONFIRM_SAVE': {
-      if (!pendingClip) throw new Error('No clip pending save.')
-      recordingStatus = 'saving'
+      const playerName = message.playerName
+      const clip = pendingClips[playerName]
+      if (!clip) throw new Error('No clip pending save for this player.')
+      playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'saving' }
       persist()
       try {
-        await finalizePendingClip(pendingClip, message.actionType)
+        await finalizePendingClip(clip, message.actionType)
       } catch (err) {
         console.error('[background] save failed', err)
-        recordingStatus = 'pending-tag'
+        playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'pending-tag' }
         persist()
         throw err
       }
-      recordingStatus = 'idle'
-      pendingClip = null
+      playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'idle' }
+      delete pendingClips[playerName]
       persist()
       return snapshot()
     }
@@ -560,20 +582,20 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
     }
 
     case 'NEW_SESSION': {
-      if (recordingStatus === 'recording' || recordingStatus === 'saving') {
-        throw new Error('Stop the current recording before starting a new session.')
+      if (anyPlayerBusy()) {
+        throw new Error('Stop all current recordings before starting a new session.')
       }
       // Don't let an untagged clip vanish just because the session reset —
-      // same reasoning as the orphaned-clip check in START_RECORDING.
-      if (pendingClip) {
-        const orphan = pendingClip
+      // same reasoning as the orphaned-clip check in START_RECORDING. Covers
+      // every player with a clip still awaiting a tag, not just one.
+      for (const orphan of Object.values(pendingClips)) {
         try {
           await finalizePendingClip(orphan, null)
         } catch (err) {
           console.error('[background] could not recover orphaned pending clip during New Session', err)
         }
-        pendingClip = null
       }
+      pendingClips = {}
       if (standbyArmed) {
         try {
           await sendToOffscreen({ type: 'OFFSCREEN_DISARM_STANDBY' })
@@ -597,7 +619,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       draftCaptureRegion = match.captureRegion
       matchTabId = null
       match = defaultMatch()
-      recordingStatus = 'idle'
+      playerRecordingStatus = {}
       lastSavedPath = null
       lastCompilationPath = null
       persist()

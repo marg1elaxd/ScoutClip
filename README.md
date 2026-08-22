@@ -197,14 +197,54 @@ Current defaults (`DEFAULT_ACTION_CATEGORIES` in
 - **Offensive**: Pass, Key Pass, Dribble, Shot, Goal, Assist, Off-ball Movement
 - **Defensive**: Interception, Tackle, Ground Duel, Aerial Duel, Clearance, Block, Pressing
 
+## Recording multiple players at once
+
+There's no Record button and no "selected player" — each player's own chip
+*is* the record toggle. Click a chip to start their clip; click it again to
+stop. Any number of chips can be live at the same time, each fully
+independent: starting player B's clip doesn't touch player A's still-running
+one, and each gets its own tag panel (expands inline under that specific
+chip once it's stopped) so tagging one doesn't block or get mixed up with
+another that's still recording.
+
+- **Chip states**: idle (default), **live** (recording — filled red,
+  pulsing dot) and **busy** (dimmed, unclickable — covers the post-roll
+  wait, awaiting a tag, and saving, so a second click can't fire mid-flow
+  for that player).
+- **Backend**: `playerRecordingStatus` in `StateSnapshot` is a map keyed by
+  player name (a player absent from it, or explicitly `'idle'`, isn't
+  recording) — see [src/lib/messages.ts](src/lib/messages.ts) — replacing
+  what used to be one global `recordingStatus`. `START_RECORDING`,
+  `STOP_RECORDING`, and `CONFIRM_SAVE` all now take a `playerName`.
+- **Offscreen document**: each in-flight clip is its own "session" (keyed by
+  player name, since a player can only have one clip in flight at a time),
+  each with its own independent `MediaRecorder` — but all of them read from
+  the *same* underlying `recordStream`. Nothing about `MediaRecorder`
+  requires exclusive access to a `MediaStream`, so this is just N recorders
+  pointed at one stream, the same trick pre-roll's standby buffer already
+  used to avoid a capture gap at its own rotation seams (see
+  [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)). The underlying
+  `tabCapture` stream itself is only torn down once *every* session has
+  stopped and standby isn't armed either — not the instant any single
+  session finishes.
+- **Pre-roll works per-session, not via a single "promotion"**: earlier
+  versions of this had one active clip promote from a shared standby
+  buffer, which meant stopping and restarting a recorder at that handoff
+  (the exact seam that caused the freeze-then-skip bug documented below,
+  before it was fixed). With multiple concurrent sessions there's no single
+  moment to hand off at anyway, so standby buffering now just runs
+  continuously and independently of whatever sessions are or aren't active;
+  at Stop, whatever standby segment(s) cover *that session's* look-back
+  window get losslessly spliced onto the front of its own recording.
+
 ## Adding a player mid-match
 
 The roster entered at Start Match isn't fixed — a **+** chip at the end of
 the player row (popup and overlay both) opens a small inline name field.
-Confirming it (`ADD_PLAYER`) appends the player to `match.players` *and*
-selects them immediately, since the reason to add someone mid-match is
-always "clip this person right now" — a separate select-them-after step
-would just be friction for no reason.
+Confirming it (`ADD_PLAYER`) appends the player to `match.players` and
+immediately starts recording them (same as clicking their chip would), since
+the reason to add someone mid-match is always "clip this person right now" —
+a separate add-then-click step would just be friction for no reason.
 
 ## Game speed correction
 
@@ -288,7 +328,7 @@ quality exactly matches the source clips).
 Chrome closes the extension popup the instant it loses focus — which it
 necessarily does the moment you click into the broadcast tab to actually
 watch the game. That's fine for setup, but painful for the live
-record/tag/select-player loop, which is exactly what this overlay fixes: a
+record/tag loop, which is exactly what this overlay fixes: a
 small floating panel injected into the broadcast tab itself
 ([src/content/overlay.tsx](src/content/overlay.tsx)), staying visible while
 you interact with the video because it's part of the page, not a separate
@@ -321,10 +361,10 @@ popup window.
   clicked) and only renders if so. Every other open tab pays one small
   message round trip and renders nothing.
 - **Same backend, second frontend.** It sends the exact same messages the
-  popup does (`GET_STATE`, `SELECT_PLAYER`, `START_RECORDING`, ...) — no
-  changes to the recording pipeline, offscreen document, or file-saving
-  logic. The one real difference: content scripts have no `chrome.tabCapture`
-  access at all (unlike the popup, which can call it directly from a click
+  popup does (`GET_STATE`, `START_RECORDING`, ...) — no changes to the
+  recording pipeline, offscreen document, or file-saving logic. The one real
+  difference: content scripts have no `chrome.tabCapture` access at all
+  (unlike the popup, which can call it directly from a click
   handler), so the overlay's `START_RECORDING` omits `streamId` entirely and
   the background worker resolves one itself using the message `sender`'s tab
   id (`resolveStreamIdForTab` in
@@ -363,14 +403,15 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
 "⋯" panel), each is independently toggleable with its own seconds value
 (1–30s):
 
-- **Auto-stop / post-roll** — keeps recording for N seconds after Stop is
-  clicked. Simple: the offscreen document just delays calling
-  `recorder.stop()` by that long (`stopActiveClip` in
-  [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) — no architecture
-  change, the clip's natural end already includes the extra seconds. The
-  popup shows a local "Capturing follow-through… Ns" countdown purely for
-  feedback (not synced to the backend, just cosmetic) and disables
-  Record/Stop for that window so a second click can't fire mid-stop.
+- **Auto-stop / post-roll** — keeps recording for N seconds after that
+  player's chip is clicked to stop. Simple: the offscreen document just
+  delays calling that session's `recorder.stop()` by that long (`stopSession`
+  in [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) — no
+  architecture change, the clip's natural end already includes the extra
+  seconds. The popup/overlay show a local "+Ns" countdown next to that
+  player's chip purely for feedback (not synced to the backend, just
+  cosmetic) and disable that chip for the window so a second click can't
+  fire mid-stop.
 
 - **Pre-roll** — this is the substantial one, since the browser can't
   retroactively capture pixels it never captured: getting footage from
@@ -382,28 +423,23 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
     the offscreen document: a `MediaRecorder` runs the whole time, rotated
     into fresh segments every `max(preRollSeconds, 5)`s so memory stays
     bounded (only the last 2 completed segments are kept — a few dozen MB
-    at most, not the whole match).
-  - Pressing **Record** *promotes* standby to a real clip: a normal clip
-    recorder starts on the same already-open stream, and only once it's
-    running does the standby segment that was covering that moment get
-    finalized. (Earlier version of this did it the other way round —
-    finalize standby, *then* start the clip recorder — which left a real
-    gap between the two, since `MediaRecorder.stop()` is async and the new
-    recorder didn't exist yet while waiting for it. That gap showed up in
-    playback as a brief freeze-then-skip right at the start of pre-roll
-    clips. Same fix applied to the periodic standby-segment rotation, since
-    a rotation seam landing inside the requested look-back window produced
-    the identical artifact. See `rotateStandbySegment` /
-    `startRecordingViaPromotion` in
-    [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts).)
-  - Pressing **Stop** finalizes the clip, then **ffmpeg.wasm** losslessly
-    joins whatever standby segment(s) cover the requested look-back window
-    with the clip itself (concat demuxer, stream copy — no re-encoding,
+    at most, not the whole match). This runs independently of whatever
+    per-player clip sessions are or aren't active — see "Recording multiple
+    players at once" above for why there's no single "promote standby to
+    the clip" step the way earlier versions had.
+  - Clicking a player's chip starts a normal clip recorder on the same
+    already-open shared stream — no interaction with standby's own recorder
+    at all, so there's no handoff/seam at that moment to worry about.
+  - Clicking that chip again to stop finalizes the clip, then **ffmpeg.wasm**
+    losslessly joins whatever standby segment(s) cover *that session's*
+    requested look-back window with the clip itself (concat demuxer, stream
+    copy — no re-encoding,
     consistent with the lossless approach planned for Phase 4 compilation)
     and trims the front to the requested offset (also stream copy — cuts
     land on the nearest keyframe, so "5 seconds before" is *approximately*
-    5 seconds, not frame-exact). Standby buffering then resumes immediately
-    for the next clip.
+    5 seconds, not frame-exact). Standby buffering never stopped in the
+    first place, so there's nothing to resume — it's already covering
+    whoever gets clicked next.
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).
@@ -579,26 +615,31 @@ tradeoff for this phase.
 
 ## Recovering an unresolved pending clip
 
-The popup's Record button is disabled while a clip is awaiting a tag, so
-this shouldn't normally be reachable — but the background service worker can
-be evicted/restarted by Chrome at any point, which used to reset its
-in-memory `recordingStatus`/`pendingClip` back to defaults even though the
-offscreen document still held an unsaved clip in memory. Two things guard
-against losing a clip that way now:
+A player's chip is disabled while their clip is awaiting a tag, so this
+shouldn't normally be reachable — but the background service worker can be
+evicted/restarted by Chrome at any point, which used to reset its in-memory
+`recordingStatus`/`pendingClip` back to defaults even though the offscreen
+document still held an unsaved clip in memory. Now that both are per-player
+maps (`playerRecordingStatus`, `pendingClips`, keyed by player name), the
+same two things guard against losing a clip that way, scoped to whichever
+player it actually belonged to:
 
-1. `recordingStatus` and `pendingClip` are persisted to
+1. `playerRecordingStatus` and `pendingClips` are persisted to
    `chrome.storage.session` (not just `match`), so a service-worker restart
-   correctly rehydrates back into `pending-tag` instead of silently
-   forgetting there's a clip waiting — the popup will still show the tag
-   panel, not a blank Record button.
-2. As a belt-and-suspenders fallback, `START_RECORDING` checks for a leftover
-   `pendingClip` before starting a new recording and, if found, auto-saves it
-   as `Untagged` first rather than overwriting it. This also covers cases
-   the persistence fix above can't (e.g. the offscreen document itself was
-   reloaded and no longer has the clip's bytes) — that failure is logged via
+   correctly rehydrates that player's status back into `pending-tag` instead
+   of silently forgetting there's a clip waiting — their chip will still
+   show the tag panel, not reset to idle.
+2. As a belt-and-suspenders fallback, `START_RECORDING` checks for a
+   leftover `pendingClips[playerName]` before starting a new recording for
+   that same player and, if found, auto-saves it as `Untagged` first rather
+   than overwriting it. This also covers cases the persistence fix above
+   can't (e.g. the offscreen document itself was reloaded and no longer has
+   the clip's bytes) — that failure is logged via
    `console.error('[background] could not recover orphaned pending clip', ...)`
    and the new recording proceeds regardless, since blocking it over an
-   unrecoverable old clip would be worse.
+   unrecoverable old clip would be worse. `NEW_SESSION` sweeps every
+   remaining player's `pendingClips` entry the same way, so nothing is left
+   behind purely because a different player's clip was the one still open.
 
 ## Known gaps before this is match-ready
 

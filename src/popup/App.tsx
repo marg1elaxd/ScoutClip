@@ -7,6 +7,7 @@ import {
   MIN_ROLL_SECONDS,
   type ActionCategoryName,
   type RecordingSettings,
+  type RecordingStatus,
 } from '../lib/types'
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
 
@@ -96,14 +97,17 @@ export default function App() {
   const [matchInfoInput, setMatchInfoInput] = useState('')
   const [playerInput, setPlayerInput] = useState('')
   const [rosterDraft, setRosterDraft] = useState<string[]>([])
-  const [tagCategory, setTagCategory] = useState<'Offensive' | 'Defensive' | null>(null)
+  // Keyed by player name — each player's tag panel (and Stop's post-roll
+  // countdown) is independent, since several can be at different points of
+  // the record/tag flow at once.
+  const [tagCategoryByPlayer, setTagCategoryByPlayer] = useState<Record<string, 'Offensive' | 'Defensive'>>({})
+  const [stoppingPlayers, setStoppingPlayers] = useState<Set<string>>(new Set())
+  const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
   const [regionPickerBusy, setRegionPickerBusy] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [showClips, setShowClips] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<RecordingSettings | null>(null)
-  const [isStopping, setIsStopping] = useState(false)
-  const [stopCountdown, setStopCountdown] = useState<number | null>(null)
   const [gameSpeedInput, setGameSpeedInput] = useState(1)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [compiling, setCompiling] = useState(false)
@@ -121,14 +125,23 @@ export default function App() {
     return () => clearInterval(id)
   }, [state?.match.clockRunning])
 
-  // Purely a local, cosmetic countdown — the actual post-roll delay lives in
-  // the offscreen document (it must, to keep capturing) and isn't reported
-  // back live; this just gives the scout a sense of progress while waiting.
+  // Purely a local, cosmetic countdown per player — the actual post-roll
+  // delay lives in the offscreen document (it must, to keep capturing) and
+  // isn't reported back live; this just gives the scout a sense of progress
+  // while waiting. Several can be ticking down concurrently.
   useEffect(() => {
-    if (stopCountdown == null || stopCountdown <= 0) return
-    const id = setTimeout(() => setStopCountdown((c) => (c != null ? c - 1 : null)), 1000)
+    if (Object.keys(stopCountdowns).length === 0) return
+    const id = setTimeout(() => {
+      setStopCountdowns((prev) => {
+        const next: Record<string, number> = {}
+        for (const [player, secondsLeft] of Object.entries(prev)) {
+          if (secondsLeft > 1) next[player] = secondsLeft - 1
+        }
+        return next
+      })
+    }, 1000)
     return () => clearTimeout(id)
-  }, [stopCountdown])
+  }, [stopCountdowns])
 
   async function call(message: Parameters<typeof sendMessage>[0]) {
     setError(null)
@@ -382,42 +395,61 @@ export default function App() {
     )
   }
 
-  const { match, recordingStatus, currentMinute, lastSavedPath, lastCompilationPath, settings } = state
+  const { match, playerRecordingStatus, currentMinute, lastSavedPath, lastCompilationPath, settings } = state
 
-  async function handleRecordClick() {
+  function statusFor(player: string): RecordingStatus {
+    return playerRecordingStatus[player] ?? 'idle'
+  }
+
+  const anyPlayerBusy = Object.values(playerRecordingStatus).some(
+    (s) => s === 'recording' || s === 'stopping' || s === 'saving',
+  )
+
+  // The chip itself is the toggle: idle → click starts that player's clip,
+  // recording → click stops it. Any number of players can be mid-clip at
+  // once, each independently — there's no single "selected player" anymore.
+  async function handleChipClick(player: string) {
     setError(null)
-    if (recordingStatus === 'idle') {
+    const status = statusFor(player)
+    if (status === 'idle') {
       try {
         if (settings.preRollEnabled) {
           // Promotes the already-armed standby buffer — no fresh capture
           // stream needed (or wanted: it has to be the same stream that's
           // been buffering, not a new one).
-          await call({ type: 'START_RECORDING' })
+          await call({ type: 'START_RECORDING', playerName: player })
         } else {
           const streamId = await getStreamIdForActiveTab()
-          await call({ type: 'START_RECORDING', streamId })
+          await call({ type: 'START_RECORDING', playerName: player, streamId })
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       }
-    } else if (recordingStatus === 'recording') {
-      setIsStopping(true)
-      if (settings.postRollEnabled) setStopCountdown(settings.postRollSeconds)
+    } else if (status === 'recording') {
+      setStoppingPlayers((prev) => new Set(prev).add(player))
+      if (settings.postRollEnabled) setStopCountdowns((prev) => ({ ...prev, [player]: settings.postRollSeconds }))
       try {
-        await call({ type: 'STOP_RECORDING' })
+        await call({ type: 'STOP_RECORDING', playerName: player })
       } finally {
-        setIsStopping(false)
-        setStopCountdown(null)
+        setStoppingPlayers((prev) => {
+          const next = new Set(prev)
+          next.delete(player)
+          return next
+        })
+        setStopCountdowns((prev) => {
+          const { [player]: _drop, ...rest } = prev
+          return rest
+        })
       }
     }
   }
 
   async function handleNewSession() {
     setError(null)
-    const hasUnsavedClip = recordingStatus === 'pending-tag'
+    const hasUnsavedClip = Object.values(playerRecordingStatus).some((s) => s === 'pending-tag')
     const confirmed = window.confirm(
       hasUnsavedClip
-        ? 'Start a new session? The clip awaiting a tag will be saved as Untagged first.'
+        ? 'Start a new session? Clips still awaiting a tag will be saved as Untagged first.'
         : 'Start a new session? This clears the current match setup and clip list (already-saved clip files are not touched).',
     )
     if (!confirmed) return
@@ -458,6 +490,19 @@ export default function App() {
     await call({ type: 'ADD_PLAYER', playerName: name })
     setNewPlayerName('')
     setShowAddPlayer(false)
+    // The point of adding someone mid-match is always "clip them right
+    // now" — immediately start their recording rather than requiring a
+    // separate chip click after.
+    try {
+      if (settings.preRollEnabled) {
+        await call({ type: 'START_RECORDING', playerName: name })
+      } else {
+        const streamId = await getStreamIdForActiveTab()
+        await call({ type: 'START_RECORDING', playerName: name, streamId })
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   }
 
   function toggleClipSelected(clipId: string) {
@@ -527,13 +572,13 @@ export default function App() {
                 ? `Region: ${match.captureRegion.width}×${match.captureRegion.height}px`
                 : 'Recording full tab'}
             </span>
-            <button disabled={regionPickerBusy || recordingStatus !== 'idle'} onClick={handleOpenRegionPicker}>
+            <button disabled={regionPickerBusy || anyPlayerBusy} onClick={handleOpenRegionPicker}>
               {regionPickerBusy ? 'Opening picker…' : 'Change region'}
             </button>
           </div>
           <div className="clock-row">
             <span>Broadcast tab</span>
-            <button disabled={retargeting || recordingStatus !== 'idle'} onClick={handleRetargetTab}>
+            <button disabled={retargeting || anyPlayerBusy} onClick={handleRetargetTab}>
               {retargeting ? 'Switching…' : 'Record from this tab instead'}
             </button>
           </div>
@@ -572,27 +617,90 @@ export default function App() {
             <button style={{ flex: 1 }} onClick={() => setShowSettings(true)}>
               Settings
             </button>
-            <button
-              style={{ flex: 1 }}
-              disabled={recordingStatus === 'recording' || recordingStatus === 'saving'}
-              onClick={handleNewSession}
-            >
+            <button style={{ flex: 1 }} disabled={anyPlayerBusy} onClick={handleNewSession}>
               New session
             </button>
           </div>
         </div>
       )}
 
-      <div className="chips">
-        {match.players.map((p) => (
-          <button
-            key={p}
-            className={`chip ${match.selectedPlayer === p ? 'selected' : ''}`}
-            onClick={() => call({ type: 'SELECT_PLAYER', playerName: p })}
-          >
-            {p}
-          </button>
-        ))}
+      <div className="player-rows">
+        {match.players.map((p) => {
+          const status = statusFor(p)
+          const countdown = stopCountdowns[p]
+          const tagCategory = tagCategoryByPlayer[p] ?? null
+          // stoppingPlayers covers the gap between clicking Stop and this
+          // popup's own state actually reflecting it — the backend does set
+          // 'stopping' immediately, but that's only visible to *other*
+          // concurrent pollers (e.g. the overlay); this same caller's next
+          // state update only arrives once the whole STOP_RECORDING call
+          // (including the post-roll wait) resolves.
+          const isLocallyStopping = stoppingPlayers.has(p)
+          const busy = isLocallyStopping || status === 'stopping' || status === 'pending-tag' || status === 'saving'
+          return (
+            <div key={p} className="player-record-row">
+              <button
+                className={`chip player-chip ${status === 'recording' && !isLocallyStopping ? 'live' : ''} ${busy ? 'busy' : ''}`}
+                disabled={busy}
+                onClick={() => handleChipClick(p)}
+              >
+                {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
+                {p}
+                {status === 'saving' ? ' · saving…' : ''}
+              </button>
+              {countdown != null && <span className="status-line inline">+{countdown}s</span>}
+
+              {status === 'pending-tag' && (
+                <div className="tag-panel inline">
+                  <div className="category-row">
+                    <button
+                      className={tagCategory === 'Offensive' ? 'primary' : ''}
+                      onClick={() => setTagCategoryByPlayer((prev) => ({ ...prev, [p]: 'Offensive' }))}
+                    >
+                      Offensive
+                    </button>
+                    <button
+                      className={tagCategory === 'Defensive' ? 'primary' : ''}
+                      onClick={() => setTagCategoryByPlayer((prev) => ({ ...prev, [p]: 'Defensive' }))}
+                    >
+                      Defensive
+                    </button>
+                  </div>
+                  {tagCategory && (
+                    <div className="subcategory-grid">
+                      {settings.actionCategories[tagCategory].map((sub) => (
+                        <button
+                          key={sub}
+                          onClick={() => {
+                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}` })
+                            setTagCategoryByPlayer((prev) => {
+                              const { [p]: _drop, ...rest } = prev
+                              return rest
+                            })
+                          }}
+                        >
+                          {sub}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    className="full"
+                    onClick={() => {
+                      call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
+                      setTagCategoryByPlayer((prev) => {
+                        const { [p]: _drop, ...rest } = prev
+                        return rest
+                      })
+                    }}
+                  >
+                    Save without tag
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
         {!showAddPlayer && (
           <button className="chip" title="Add player" onClick={() => setShowAddPlayer(true)}>
             +
@@ -622,67 +730,7 @@ export default function App() {
         </div>
       )}
 
-      <button
-        className={`record-btn ${recordingStatus === 'recording' ? 'danger' : 'primary'}`}
-        disabled={
-          !match.selectedPlayer || recordingStatus === 'pending-tag' || recordingStatus === 'saving' || isStopping
-        }
-        onClick={handleRecordClick}
-      >
-        {recordingStatus === 'recording' ? '■ Stop' : '● Record'}
-        {!match.selectedPlayer && recordingStatus === 'idle' ? ' (select a player)' : ''}
-      </button>
-
-      {stopCountdown != null && (
-        <div className="status-line">Capturing follow-through… {stopCountdown}s</div>
-      )}
-
-      {recordingStatus === 'pending-tag' && (
-        <div className="tag-panel">
-          <h2>Tag this clip (optional)</h2>
-          <div className="category-row">
-            <button
-              className={tagCategory === 'Offensive' ? 'primary' : ''}
-              onClick={() => setTagCategory('Offensive')}
-            >
-              Offensive
-            </button>
-            <button
-              className={tagCategory === 'Defensive' ? 'primary' : ''}
-              onClick={() => setTagCategory('Defensive')}
-            >
-              Defensive
-            </button>
-          </div>
-          {tagCategory && (
-            <div className="subcategory-grid">
-              {settings.actionCategories[tagCategory].map((sub) => (
-                <button
-                  key={sub}
-                  onClick={() => {
-                    call({ type: 'CONFIRM_SAVE', actionType: `${tagCategory} ${sub}` })
-                    setTagCategory(null)
-                  }}
-                >
-                  {sub}
-                </button>
-              ))}
-            </div>
-          )}
-          <button
-            style={{ marginTop: 8, width: '100%' }}
-            onClick={() => {
-              call({ type: 'CONFIRM_SAVE', actionType: null })
-              setTagCategory(null)
-            }}
-          >
-            Save without tag
-          </button>
-        </div>
-      )}
-
-      {recordingStatus === 'saving' && <div className="status-line">Saving clip…</div>}
-      {lastSavedName && recordingStatus === 'idle' && <div className="status-line">Saved: {lastSavedName}</div>}
+      {lastSavedName && !anyPlayerBusy && <div className="status-line">Saved: {lastSavedName}</div>}
       {lastCompilationName && <div className="status-line">Compiled: {lastCompilationName}</div>}
       {error && <div className="error-line">{error}</div>}
 

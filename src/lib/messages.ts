@@ -10,10 +10,10 @@ export type Message =
   // content script on every page) decides whether to render itself on any
   // given tab. See OVERLAY_SHOULD_SHOW below.
   | { type: 'START_MATCH'; matchInfo: string; players: string[]; tabId?: number; gameSpeed: number }
-  | { type: 'SELECT_PLAYER'; playerName: string }
-  // Adds a player mid-match and selects them immediately — the point is
-  // always "clip this person right now", so a separate select step would
-  // just be friction.
+  // Adds a player mid-match. The UI immediately follows this with
+  // START_RECORDING for the same name — the point is always "clip this
+  // person right now", so a separate select-then-record step would just be
+  // friction.
   | { type: 'ADD_PLAYER'; playerName: string }
   | { type: 'TOGGLE_CLOCK' }
   | { type: 'SET_CAPTURE_REGION'; region: CaptureRegion | null }
@@ -36,19 +36,23 @@ export type Message =
   // if it was on (obtained the same way as ARM_PRE_ROLL, after PREPARE_TAB_SWITCH).
   | { type: 'PREPARE_TAB_SWITCH' }
   | { type: 'RETARGET_BROADCAST_TAB'; tabId: number; preRollStreamId?: string }
+  // Multiple players can each have their own clip in flight at once — every
+  // recording action names which player it's for, and the background worker
+  // tracks status per player rather than one global recording state.
   // streamId omitted when pre-roll is armed: recording is "promoted" from
-  // the already-buffering standby stream instead of starting a fresh one.
-  | { type: 'START_RECORDING'; streamId?: string }
-  | { type: 'STOP_RECORDING' }
-  | { type: 'CONFIRM_SAVE'; actionType: string | null }
+  // the already-buffering standby stream instead of starting a fresh one —
+  // also omitted (and ignored if sent) whenever the shared capture stream is
+  // already open for another concurrently-recording player.
+  | { type: 'START_RECORDING'; playerName: string; streamId?: string }
+  | { type: 'STOP_RECORDING'; playerName: string }
+  | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null }
   | { type: 'COMPILE_CLIPS'; clipIds: string[] }
   | { type: 'NEW_SESSION' }
-  | { type: 'RECORDING_STOPPED' } // offscreen -> background -> popup: a clip is awaiting a tag
-  | { type: 'CLIP_SAVED'; path: string } // offscreen -> background -> popup
 
 export interface StateSnapshot {
   match: MatchState
-  recordingStatus: RecordingStatus
+  /** Keyed by player name; a player absent from this map is idle. */
+  playerRecordingStatus: Record<string, RecordingStatus>
   currentMinute: number
   lastSavedPath: string | null
   lastCompilationPath: string | null

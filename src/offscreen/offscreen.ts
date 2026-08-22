@@ -4,15 +4,30 @@
  * using a fixed bitrate locked for the whole match, and hands finished clips back
  * to the background worker (chrome.downloads isn't available in offscreen docs).
  *
+ * Multiple players can be recorded concurrently — each has its own clip
+ * "session" (sessionId is the player's name, since a player can only have
+ * one in-flight clip at a time), but every session reads from the *same*
+ * underlying recordStream via its own independent MediaRecorder instance.
+ * Nothing about MediaRecorder requires exclusivity over a MediaStream, so
+ * this is just N recorders pointed at one stream rather than anything more
+ * exotic — the same trick the pre-roll standby buffer already relies on to
+ * avoid the promotion-seam gap (see below).
+ *
  * Pre-roll adds a second thing this document does: while "armed" (a match is
  * active and pre-roll is enabled), it continuously records the stream into
- * short rotating "standby" segments even when the scout hasn't pressed
- * Record — that's the only way to have footage from before the click, since
- * nothing can retroactively capture pixels that were never captured. When
- * Record is actually pressed, the current standby segment is finalized
- * ("promoted") and a normal clip recording begins; at Stop, the needed
- * standby segment(s) plus the clip are losslessly joined and trimmed to the
- * requested pre-roll window via ffmpeg (see ffmpeg.ts).
+ * short rotating "standby" segments completely independently of whatever
+ * per-player sessions are or aren't active — that's the only way to have
+ * footage from before a click, since nothing can retroactively capture
+ * pixels that were never captured. A session's clip is *not* built by
+ * "promoting" standby the way earlier versions of this worked; standby just
+ * keeps running in the background the whole time it's armed, and at Stop,
+ * whatever standby segment(s) cover that session's requested look-back
+ * window get losslessly joined onto the front of its own recording via
+ * ffmpeg (see ffmpeg.ts). This is deliberately simpler than a
+ * stop-old-start-new handoff: with several sessions potentially starting at
+ * different moments, there's no single "the" moment to hand off at, and
+ * standby needing to run regardless of what any given session is doing is
+ * exactly the shared-stream trick above, applied one level up.
  */
 import { CANDIDATE_MIME_TYPES, type CaptureRegion } from '../lib/types'
 import { concatAndTrimFront, concatClips, correctPlaybackSpeed } from './ffmpeg'
@@ -20,21 +35,23 @@ import { clearClipStore, getClipBlob, saveClipBlob } from './clipStore'
 
 const CROP_FPS = 30
 
-// ---- the underlying capture stream — persists across multiple clips while pre-roll is armed ----
+// ---- the underlying capture stream — persists across multiple clips/sessions while pre-roll is armed or any session is active ----
 let stream: MediaStream | null = null // raw tabCapture stream
 let recordStream: MediaStream | null = null // possibly cropped; what recorders actually read from
 let streamMimeType = 'video/webm'
 let videoBitsPerSecond = 5_000_000
 
-// ---- the "real" clip recorder, active from Record-click to Stop ----
-let recorder: MediaRecorder | null = null
-let chunks: Blob[] = []
-let clipRequestedAt: number | null = null
-let clipUsedPreRoll = false
-let preRollSecondsForClip = 0
-let pendingBlob: Blob | null = null
+// ---- active per-player clip sessions — sessionId is the player's name ----
+interface ActiveSession {
+  recorder: MediaRecorder
+  chunks: Blob[]
+  requestedAt: number
+  preRollSeconds: number // 0 if this session isn't using pre-roll
+}
+const activeSessions = new Map<string, ActiveSession>()
+const pendingBlobs = new Map<string, Blob>() // sessionId -> finished clip awaiting OFFSCREEN_GET_CLIP
 
-// ---- pre-roll standby ring buffer ----
+// ---- pre-roll standby ring buffer — one shared history, independent of any active session ----
 interface StandbySegment {
   blob: Blob
   startedAt: number
@@ -48,7 +65,7 @@ let standbySegments: StandbySegment[] = [] // oldest first, capped at 2
 let standbyRotationSeconds = 5
 let standbyRotationTimer: ReturnType<typeof setTimeout> | null = null
 
-// ---- capture-region crop pipeline (unchanged mechanics, now spans multiple clips while armed) ----
+// ---- capture-region crop pipeline (unchanged mechanics, shared across every session and standby) ----
 let cropVideoEl: HTMLVideoElement | null = null
 let cropCanvas: HTMLCanvasElement | null = null
 let cropCanvasStream: MediaStream | null = null
@@ -123,7 +140,7 @@ function stopCropPipeline() {
   cropCanvasStream = null
 }
 
-/** Obtains the tabCapture stream once; a no-op if it's already set up (e.g. pre-roll already armed it). */
+/** Obtains the tabCapture stream once; a no-op if it's already set up (e.g. pre-roll already armed it, or another session is already using it). */
 async function ensureStreamReady(streamId: string, region: CaptureRegion | null, bitrate: number) {
   if (stream) return
   videoBitsPerSecond = bitrate
@@ -151,7 +168,9 @@ async function ensureStreamReady(streamId: string, region: CaptureRegion | null,
   console.log('[offscreen] stream ready —', region ? `${region.width}x${region.height} crop` : 'full tab', streamMimeType)
 }
 
-function teardownStream() {
+/** Only safe to call once nothing — no standby, no active session — still needs the stream. */
+function teardownStreamIfUnused() {
+  if (standbyArmed || activeSessions.size > 0) return
   stopCropPipeline()
   stream?.getTracks().forEach((t) => t.stop())
   stream = null
@@ -163,9 +182,9 @@ function teardownStream() {
 function startStandbySegment() {
   if (!recordStream) return
   // Captured in a local closure (not read back off the module-level
-  // standby* vars) so the recorder being wound down at a rotation/promotion
-  // seam can still be finalized correctly even after these module vars have
-  // already been overwritten by the *next* segment — see stopSegment below.
+  // standby* vars) so the recorder being wound down at a rotation seam can
+  // still be finalized correctly even after these module vars have already
+  // been overwritten by the *next* segment — see stopSegment below.
   const chunksRef: Blob[] = []
   const startedAt = Date.now()
   const rec = new MediaRecorder(recordStream, { mimeType: streamMimeType, videoBitsPerSecond })
@@ -183,8 +202,8 @@ function startStandbySegment() {
  * Stops one specific recorder/chunk-buffer pair and resolves with its
  * finalized segment. Takes explicit references rather than reading the
  * module-level standby* vars, because by the time this resolves a *new*
- * standby segment may already be running (see rotateStandbySegment /
- * startRecordingViaPromotion) and those vars would already point at it.
+ * standby segment may already be running (see rotateStandbySegment) and
+ * those vars would already point at it.
  */
 function stopSegment(rec: MediaRecorder, chunksRef: Blob[], startedAt: number): Promise<StandbySegment> {
   return new Promise((resolve) => {
@@ -201,12 +220,12 @@ function stopSegment(rec: MediaRecorder, chunksRef: Blob[], startedAt: number): 
 /**
  * MediaRecorder.stop() is async — the old recorder doesn't actually go
  * quiet until its `stop` event fires, one or more event-loop ticks later.
- * Waiting for that before starting the replacement (the original approach)
- * left a real gap where nothing was capturing recordStream, which showed up
- * in playback as a freeze-then-skip right at the seam. Starting the new
- * recorder first and letting it briefly overlap with the old one being torn
- * down closes that gap — worst case is a fraction of a second of duplicate
- * frames at the boundary, not a lost one.
+ * Waiting for that before starting the replacement left a real gap where
+ * nothing was capturing recordStream, which showed up in playback as a
+ * freeze-then-skip right at the seam. Starting the new recorder first and
+ * letting it briefly overlap with the old one being torn down closes that
+ * gap — worst case is a fraction of a second of duplicate frames at the
+ * boundary, not a lost one.
  */
 async function rotateStandbySegment() {
   if (!standbyArmed || !standbyRecorder) return
@@ -239,89 +258,64 @@ async function disarmStandby() {
   standbyRecorder = null
   standbyChunks = []
   standbySegments = []
-  if (!recorder) teardownStream() // only fully tear down if no clip is currently using the stream
+  teardownStreamIfUnused() // no-op if any session is still actively recording
   console.log('[offscreen] pre-roll disarmed')
 }
 
-// ---- the actual clip recording ----
+// ---- per-player clip sessions ----
 
-function beginActiveClipRecording() {
-  if (!recordStream) throw new Error('Recording stream is not ready.')
-  chunks = []
-  clipRequestedAt = Date.now()
-  recorder = new MediaRecorder(recordStream, { mimeType: streamMimeType, videoBitsPerSecond })
+/** Starts a new independent recording for `sessionId` (a player name) — one at a time per session, any number of sessions concurrently. */
+async function startSession(
+  sessionId: string,
+  streamId: string | undefined,
+  region: CaptureRegion | null,
+  bitrate: number,
+  preRollSeconds: number,
+): Promise<void> {
+  if (activeSessions.has(sessionId)) throw new Error('This player is already recording.')
+  if (!recordStream) {
+    if (!streamId) throw new Error('Recording stream is not ready.')
+    await ensureStreamReady(streamId, region, bitrate)
+  }
+  const chunks: Blob[] = []
+  const requestedAt = Date.now()
+  const recorder = new MediaRecorder(recordStream!, { mimeType: streamMimeType, videoBitsPerSecond })
   recorder.ondataavailable = (e) => {
     if (e.data.size > 0) chunks.push(e.data)
   }
   recorder.start()
+  activeSessions.set(sessionId, { recorder, chunks, requestedAt, preRollSeconds })
 }
 
-/** Normal path — pre-roll not in use, matches the original single-shot record flow exactly. */
-async function startRecordingDirect(streamId: string, region: CaptureRegion | null, bitrate: number) {
-  await ensureStreamReady(streamId, region, bitrate)
-  clipUsedPreRoll = false
-  beginActiveClipRecording()
-}
-
-/**
- * Pre-roll path — promotes the standby buffer into the real clip recording.
- * Starts the active clip recorder *before* winding down the standby one
- * (same reasoning as rotateStandbySegment) so the promotion seam — right at
- * the start of every pre-roll clip — doesn't leave a capture gap there.
- */
-async function startRecordingViaPromotion(preRollSeconds: number) {
-  if (!recordStream) throw new Error('Pre-roll is not armed yet — nothing to promote.')
-  if (standbyRotationTimer != null) {
-    clearTimeout(standbyRotationTimer)
-    standbyRotationTimer = null
-  }
-  clipUsedPreRoll = true
-  preRollSecondsForClip = preRollSeconds
-
-  const oldRec = standbyRecorder
-  const oldChunks = standbyChunks
-  const oldStartedAt = standbySegmentStartedAt ?? Date.now()
-  standbyRecorder = null
-
-  beginActiveClipRecording()
-
-  if (oldRec) {
-    const segment = await stopSegment(oldRec, oldChunks, oldStartedAt)
-    standbySegments.push(segment)
-    if (standbySegments.length > 2) standbySegments.shift()
-  }
-}
-
-function stopRecorderAndCollect(): Promise<Blob> {
+function stopRecorderAndCollect(rec: MediaRecorder, chunksRef: Blob[]): Promise<Blob> {
   return new Promise((resolve, reject) => {
-    if (!recorder) {
-      reject(new Error('Stop was requested but no recording was active.'))
+    if (rec.state === 'inactive') {
+      reject(new Error('Recording already stopped.'))
       return
     }
-    const rec = recorder
-    rec.onstop = () => {
-      const blob = new Blob(chunks, { type: streamMimeType })
-      chunks = []
-      recorder = null
-      resolve(blob)
-    }
+    rec.onstop = () => resolve(new Blob(chunksRef, { type: streamMimeType }))
     rec.stop()
   })
 }
 
-async function stopActiveClip(postRollMs: number, gameSpeed: number): Promise<void> {
+async function stopSession(sessionId: string, postRollMs: number, gameSpeed: number): Promise<void> {
+  const session = activeSessions.get(sessionId)
+  if (!session) throw new Error('No active recording for this player.')
+  activeSessions.delete(sessionId)
+
   if (postRollMs > 0) await sleep(postRollMs)
-  const activeClipBlob = await stopRecorderAndCollect()
+  const activeClipBlob = await stopRecorderAndCollect(session.recorder, session.chunks)
   const ext = streamMimeType.startsWith('video/mp4') ? 'mp4' : 'webm'
 
-  if (clipUsedPreRoll && clipRequestedAt != null) {
-    const desiredStartMs = clipRequestedAt - preRollSecondsForClip * 1000
+  let pendingBlob: Blob
+  if (session.preRollSeconds > 0) {
+    const desiredStartMs = session.requestedAt - session.preRollSeconds * 1000
     const needed = standbySegments.filter((s) => s.endedAt > desiredStartMs).sort((a, b) => a.startedAt - b.startedAt)
     if (needed.length > 0) {
       const joinedStartMs = needed[0].startedAt
       const offsetSeconds = Math.max(0, (desiredStartMs - joinedStartMs) / 1000)
       try {
-        console.log('[offscreen] pre-roll trim: segments=', needed.length, 'offsetSeconds=', offsetSeconds.toFixed(2))
+        console.log('[offscreen]', sessionId, 'pre-roll trim: segments=', needed.length, 'offsetSeconds=', offsetSeconds.toFixed(2))
         pendingBlob = await concatAndTrimFront(
           [...needed.map((s) => ({ blob: s.blob, extension: ext })), { blob: activeClipBlob, extension: ext }],
           offsetSeconds,
@@ -340,26 +334,18 @@ async function stopActiveClip(postRollMs: number, gameSpeed: number): Promise<vo
   // Watching the broadcast at gameSpeed means the capture is that much too
   // fast — slow it back down to real match speed. Applied last, after any
   // pre-roll join/trim, so the pre-roll math (which is about real seconds
-  // before the click) stays untouched by this — it operates on whatever
-  // pendingBlob is at this point, sped-up content included.
+  // before the click) stays untouched by this.
   if (gameSpeed !== 1) {
     try {
-      console.log('[offscreen] correcting playback speed, factor=', gameSpeed)
-      pendingBlob = await correctPlaybackSpeed(pendingBlob!, ext, gameSpeed)
+      console.log('[offscreen]', sessionId, 'correcting playback speed, factor=', gameSpeed)
+      pendingBlob = await correctPlaybackSpeed(pendingBlob, ext, gameSpeed)
     } catch (err) {
       console.error('[offscreen] speed correction failed — saving clip at recorded (sped-up) speed instead', err)
     }
   }
 
-  clipRequestedAt = null
-  clipUsedPreRoll = false
-  standbyChunks = []
-
-  if (standbyArmed) {
-    startStandbySegment() // resume buffering for the next clip
-  } else {
-    teardownStream()
-  }
+  pendingBlobs.set(sessionId, pendingBlob)
+  teardownStreamIfUnused()
 }
 
 // chrome.downloads is NOT available inside offscreen documents, and
@@ -372,13 +358,14 @@ async function stopActiveClip(postRollMs: number, gameSpeed: number): Promise<vo
 // clipId, and returns that id — chrome.downloads has no way to read a saved
 // file's bytes back, so this is the only way a later compilation can get at
 // this clip's actual video data again.
-async function takePendingClip(): Promise<{ url: string; mimeType: string; clipId: string }> {
-  if (!pendingBlob) throw new Error('No recorded clip to hand off.')
-  const mimeType = pendingBlob.type || 'video/webm'
+async function takePendingClip(sessionId: string): Promise<{ url: string; mimeType: string; clipId: string }> {
+  const blob = pendingBlobs.get(sessionId)
+  if (!blob) throw new Error('No recorded clip to hand off for this player.')
+  pendingBlobs.delete(sessionId)
+  const mimeType = blob.type || 'video/webm'
   const clipId = crypto.randomUUID()
-  await saveClipBlob(clipId, pendingBlob)
-  const url = URL.createObjectURL(pendingBlob)
-  pendingBlob = null
+  await saveClipBlob(clipId, blob)
+  const url = URL.createObjectURL(blob)
   return { url, mimeType, clipId }
 }
 
@@ -409,19 +396,15 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({ ok: true })
         break
       case 'OFFSCREEN_START':
-        if (message.viaPromotion) {
-          await startRecordingViaPromotion(message.preRollSeconds)
-        } else {
-          await startRecordingDirect(message.streamId, message.region, message.videoBitsPerSecond)
-        }
+        await startSession(message.sessionId, message.streamId, message.region, message.videoBitsPerSecond, message.preRollSeconds ?? 0)
         sendResponse({ ok: true })
         break
       case 'OFFSCREEN_STOP':
-        await stopActiveClip(message.postRollMs ?? 0, message.gameSpeed ?? 1)
+        await stopSession(message.sessionId, message.postRollMs ?? 0, message.gameSpeed ?? 1)
         sendResponse({ ok: true })
         break
       case 'OFFSCREEN_GET_CLIP':
-        sendResponse(await takePendingClip())
+        sendResponse(await takePendingClip(message.sessionId))
         break
       case 'OFFSCREEN_COMPILE':
         sendResponse(await compileClips(message.clipIds))

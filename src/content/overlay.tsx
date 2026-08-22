@@ -11,8 +11,8 @@
  * round trip.
  *
  * Everything else reuses the exact same background message protocol the
- * popup uses (GET_STATE, SELECT_PLAYER, START_RECORDING, ...) — this is a
- * second frontend for the same backend, not a different recording pipeline.
+ * popup uses (GET_STATE, START_RECORDING, ...) — this is a second frontend
+ * for the same backend, not a different recording pipeline.
  * The one real difference: content scripts have no chrome.tabCapture access
  * at all, so START_RECORDING is sent without a streamId here and the
  * background worker resolves one itself from this tab.
@@ -20,6 +20,7 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { sendMessage, type StateSnapshot } from '../lib/messages'
+import type { RecordingStatus } from '../lib/types'
 
 const HOST_ID = 'scout-clip-recorder-overlay-host'
 const POLL_MS = 3000
@@ -78,6 +79,13 @@ const OVERLAY_CSS = `
   .chips { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 8px; }
   .chip { padding: 4px 9px; border-radius: 999px; font-size: 11px; }
   .chip.selected { background: #2f6feb; border-color: #2f6feb; color: white; font-weight: 600; }
+  .player-rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .player-record-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .player-chip { display: inline-flex; align-items: center; gap: 6px; }
+  .player-chip.live { background: #d1453b; border-color: #d1453b; color: white; font-weight: 600; }
+  .player-chip.busy { opacity: 0.6; }
+  .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: white; flex-shrink: 0; animation: rec-pulse 1.2s infinite; }
+  @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .add-player-row { display: flex; gap: 5px; margin-bottom: 8px; }
   .add-player-row input {
     flex: 1;
@@ -93,11 +101,13 @@ const OVERLAY_CSS = `
   }
   .record-btn { width: 100%; padding: 11px; font-size: 13px; }
   .tag-panel { margin-top: 8px; padding: 8px; background: #1a2027; border-radius: 8px; border: 1px solid #2b333a; }
+  .tag-panel.inline { width: 100%; box-sizing: border-box; margin-top: 0; }
   .category-row { display: flex; gap: 6px; margin-bottom: 6px; }
   .category-row button { flex: 1; }
   .subcategory-grid { display: flex; flex-wrap: wrap; gap: 5px; }
   .full { margin-top: 6px; width: 100%; }
   .status { margin-top: 6px; font-size: 11px; color: #9aa4ad; }
+  .status.inline { margin-top: 0; }
   .error { margin-top: 6px; font-size: 11px; color: #ff8a80; }
   .footer { margin-top: 8px; font-size: 10px; color: #6b7580; }
 `
@@ -105,10 +115,10 @@ const OVERLAY_CSS = `
 function OverlayApp({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const [tagCategory, setTagCategory] = useState<'Offensive' | 'Defensive' | null>(null)
+  const [tagCategoryByPlayer, setTagCategoryByPlayer] = useState<Record<string, 'Offensive' | 'Defensive'>>({})
   const [minimized, setMinimized] = useState(false)
-  const [isStopping, setIsStopping] = useState(false)
-  const [stopCountdown, setStopCountdown] = useState<number | null>(null)
+  const [stoppingPlayers, setStoppingPlayers] = useState<Set<string>>(new Set())
+  const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
 
@@ -134,10 +144,18 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   }, [])
 
   useEffect(() => {
-    if (stopCountdown == null || stopCountdown <= 0) return
-    const id = setTimeout(() => setStopCountdown((c) => (c != null ? c - 1 : null)), 1000)
+    if (Object.keys(stopCountdowns).length === 0) return
+    const id = setTimeout(() => {
+      setStopCountdowns((prev) => {
+        const next: Record<string, number> = {}
+        for (const [player, secondsLeft] of Object.entries(prev)) {
+          if (secondsLeft > 1) next[player] = secondsLeft - 1
+        }
+        return next
+      })
+    }, 1000)
     return () => clearTimeout(id)
-  }, [stopCountdown])
+  }, [stopCountdowns])
 
   async function call(message: Parameters<typeof sendMessage>[0]) {
     setError(null)
@@ -151,24 +169,39 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
 
   if (!state) return null
 
-  const { match, recordingStatus, currentMinute, settings } = state
+  const { match, playerRecordingStatus, currentMinute, settings } = state
 
-  async function handleRecordClick() {
+  function statusFor(player: string): RecordingStatus {
+    return playerRecordingStatus[player] ?? 'idle'
+  }
+
+  // The chip itself is the toggle: idle → click starts that player's clip,
+  // recording → click stops it. Any number of players can be mid-clip at
+  // once, each independently.
+  async function handleChipClick(player: string) {
     setError(null)
-    if (recordingStatus === 'idle') {
+    const status = statusFor(player)
+    if (status === 'idle') {
       try {
-        await call({ type: 'START_RECORDING' })
+        await call({ type: 'START_RECORDING', playerName: player })
       } catch (err) {
         setError(err instanceof Error ? err.message : String(err))
       }
-    } else if (recordingStatus === 'recording') {
-      setIsStopping(true)
-      if (settings.postRollEnabled) setStopCountdown(settings.postRollSeconds)
+    } else if (status === 'recording') {
+      setStoppingPlayers((prev) => new Set(prev).add(player))
+      if (settings.postRollEnabled) setStopCountdowns((prev) => ({ ...prev, [player]: settings.postRollSeconds }))
       try {
-        await call({ type: 'STOP_RECORDING' })
+        await call({ type: 'STOP_RECORDING', playerName: player })
       } finally {
-        setIsStopping(false)
-        setStopCountdown(null)
+        setStoppingPlayers((prev) => {
+          const next = new Set(prev)
+          next.delete(player)
+          return next
+        })
+        setStopCountdowns((prev) => {
+          const { [player]: _drop, ...rest } = prev
+          return rest
+        })
       }
     }
   }
@@ -179,13 +212,23 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     await call({ type: 'ADD_PLAYER', playerName: name })
     setNewPlayerName('')
     setShowAddPlayer(false)
+    // The point of adding someone mid-match is always "clip them right
+    // now" — immediately start their recording rather than requiring a
+    // separate chip click after.
+    try {
+      await call({ type: 'START_RECORDING', playerName: name })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
   }
+
+  const recordingPlayers = match.players.filter((p) => statusFor(p) === 'recording')
 
   if (minimized) {
     return (
       <div className="pill" onClick={() => setMinimized(false)}>
-        <span className={`dot ${recordingStatus === 'recording' ? 'recording' : ''}`} />
-        {match.selectedPlayer ?? 'Scout Clip Recorder'}
+        <span className={`dot ${recordingPlayers.length > 0 ? 'recording' : ''}`} />
+        {recordingPlayers.length > 0 ? `${recordingPlayers.length} recording` : match.matchInfo || 'Scout Clip Recorder'}
       </div>
     )
   }
@@ -206,16 +249,80 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
-      <div className="chips">
-        {match.players.map((p) => (
-          <button
-            key={p}
-            className={`chip ${match.selectedPlayer === p ? 'selected' : ''}`}
-            onClick={() => call({ type: 'SELECT_PLAYER', playerName: p })}
-          >
-            {p}
-          </button>
-        ))}
+      <div className="player-rows">
+        {match.players.map((p) => {
+          const status = statusFor(p)
+          const countdown = stopCountdowns[p]
+          const tagCategory = tagCategoryByPlayer[p] ?? null
+          // See the popup's identical comment: the backend's own 'stopping'
+          // status isn't visible to this same caller until the whole
+          // STOP_RECORDING call (including the post-roll wait) resolves.
+          const isLocallyStopping = stoppingPlayers.has(p)
+          const busy = isLocallyStopping || status === 'stopping' || status === 'pending-tag' || status === 'saving'
+          return (
+            <div key={p} className="player-record-row">
+              <button
+                className={`chip player-chip ${status === 'recording' && !isLocallyStopping ? 'live' : ''} ${busy ? 'busy' : ''}`}
+                disabled={busy}
+                onClick={() => handleChipClick(p)}
+              >
+                {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
+                {p}
+                {status === 'saving' ? ' · saving…' : ''}
+              </button>
+              {countdown != null && <span className="status inline">+{countdown}s</span>}
+
+              {status === 'pending-tag' && (
+                <div className="tag-panel inline">
+                  <div className="category-row">
+                    <button
+                      className={tagCategory === 'Offensive' ? 'primary' : ''}
+                      onClick={() => setTagCategoryByPlayer((prev) => ({ ...prev, [p]: 'Offensive' }))}
+                    >
+                      Offensive
+                    </button>
+                    <button
+                      className={tagCategory === 'Defensive' ? 'primary' : ''}
+                      onClick={() => setTagCategoryByPlayer((prev) => ({ ...prev, [p]: 'Defensive' }))}
+                    >
+                      Defensive
+                    </button>
+                  </div>
+                  {tagCategory && (
+                    <div className="subcategory-grid">
+                      {settings.actionCategories[tagCategory].map((sub) => (
+                        <button
+                          key={sub}
+                          onClick={() => {
+                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}` })
+                            setTagCategoryByPlayer((prev) => {
+                              const { [p]: _drop, ...rest } = prev
+                              return rest
+                            })
+                          }}
+                        >
+                          {sub}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  <button
+                    className="full"
+                    onClick={() => {
+                      call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
+                      setTagCategoryByPlayer((prev) => {
+                        const { [p]: _drop, ...rest } = prev
+                        return rest
+                      })
+                    }}
+                  >
+                    Save without tag
+                  </button>
+                </div>
+              )}
+            </div>
+          )
+        })}
         {!showAddPlayer && (
           <button className="chip" title="Add player" onClick={() => setShowAddPlayer(true)}>
             +
@@ -245,62 +352,6 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
-      <button
-        className={`record-btn ${recordingStatus === 'recording' ? 'danger' : 'primary'}`}
-        disabled={
-          !match.selectedPlayer || recordingStatus === 'pending-tag' || recordingStatus === 'saving' || isStopping
-        }
-        onClick={handleRecordClick}
-      >
-        {recordingStatus === 'recording' ? '■ Stop' : '● Record'}
-      </button>
-
-      {stopCountdown != null && <div className="status">Capturing follow-through… {stopCountdown}s</div>}
-
-      {recordingStatus === 'pending-tag' && (
-        <div className="tag-panel">
-          <div className="category-row">
-            <button
-              className={tagCategory === 'Offensive' ? 'primary' : ''}
-              onClick={() => setTagCategory('Offensive')}
-            >
-              Offensive
-            </button>
-            <button
-              className={tagCategory === 'Defensive' ? 'primary' : ''}
-              onClick={() => setTagCategory('Defensive')}
-            >
-              Defensive
-            </button>
-          </div>
-          {tagCategory && (
-            <div className="subcategory-grid">
-              {settings.actionCategories[tagCategory].map((sub) => (
-                <button
-                  key={sub}
-                  onClick={() => {
-                    call({ type: 'CONFIRM_SAVE', actionType: `${tagCategory} ${sub}` })
-                    setTagCategory(null)
-                  }}
-                >
-                  {sub}
-                </button>
-              ))}
-            </div>
-          )}
-          <button
-            className="full"
-            onClick={() => {
-              call({ type: 'CONFIRM_SAVE', actionType: null })
-              setTagCategory(null)
-            }}
-          >
-            Save without tag
-          </button>
-        </div>
-      )}
-
-      {recordingStatus === 'saving' && <div className="status">Saving clip…</div>}
       {error && <div className="error">{error}</div>}
 
       <div className="footer">
