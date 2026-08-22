@@ -433,12 +433,25 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
   - When pre-roll is enabled, **Start Match** also grabs a `tabCapture`
     stream for the active tab and arms continuous **standby buffering** in
     the offscreen document: a `MediaRecorder` runs the whole time, rotated
-    into fresh segments every `max(preRollSeconds, 5)`s so memory stays
-    bounded (only the last 2 completed segments are kept — a few dozen MB
-    at most, not the whole match). This runs independently of whatever
-    per-player clip sessions are or aren't active — see "Recording multiple
-    players at once" above for why there's no single "promote standby to
-    the clip" step the way earlier versions had.
+    into fresh segments every `STANDBY_ROTATION_SECONDS` (a fixed 15s,
+    [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) so memory stays
+    bounded (enough trailing segments are kept to cover the longest
+    configurable pre-roll window — a few dozen MB at most, not the whole
+    match). This runs independently of whatever per-player clip sessions are
+    or aren't active — see "Recording multiple players at once" above for
+    why there's no single "promote standby to the clip" step the way earlier
+    versions had.
+    - This cadence is deliberately **not** tied to the configured
+      `preRollSeconds` — an earlier version rotated as often as every
+      `preRollSeconds` (minimum 5s), which meant a short pre-roll window
+      caused very frequent rotation. Each rotation does real synchronous
+      work (spins up a new `MediaRecorder`, finalizes the old one's data) on
+      the same thread the crop-canvas draw loop and every other recorder
+      share, and doing that every 5s was a periodic, noticeable stutter in
+      *every* concurrently recording clip — reported as "clips are laggy,
+      lag every 5 seconds" with pre-roll set to 5s, which lined up exactly
+      with the rotation cadence. A longer, fixed cadence cuts how often that
+      cost is paid, independent of whatever pre-roll length is configured.
   - Clicking a player's chip starts a normal clip recorder on the same
     already-open shared stream — no interaction with standby's own recorder
     at all, so there's no handoff/seam at that moment to worry about.

@@ -344,15 +344,14 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
     case 'ARM_PRE_ROLL': {
       if (!match.matchActive) throw new Error('Start a match before arming pre-roll.')
       await ensureOffscreenDocument()
-      // At least as long as the requested pre-roll window, so a single
-      // rotation always has enough lookback even right after arming.
-      const rotationSeconds = Math.max(settings.preRollSeconds, 5)
+      // Rotation cadence is fixed inside the offscreen document itself,
+      // decoupled from the configured pre-roll length — see
+      // STANDBY_ROTATION_SECONDS in offscreen.ts for why.
       await sendToOffscreen({
         type: 'OFFSCREEN_ARM_STANDBY',
         streamId: message.streamId,
         region: match.captureRegion,
         videoBitsPerSecond: RECORDING_PROFILE.videoBitsPerSecond,
-        rotationSeconds,
       })
       standbyArmed = true
       persist()
@@ -413,14 +412,12 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
 
       if (settings.preRollEnabled && message.preRollStreamId) {
         await ensureOffscreenDocument()
-        const rotationSeconds = Math.max(settings.preRollSeconds, 5)
         try {
           await sendToOffscreen({
             type: 'OFFSCREEN_ARM_STANDBY',
             streamId: message.preRollStreamId,
             region: null,
             videoBitsPerSecond: RECORDING_PROFILE.videoBitsPerSecond,
-            rotationSeconds,
           })
           standbyArmed = true
         } catch (err) {

@@ -29,11 +29,25 @@
  * standby needing to run regardless of what any given session is doing is
  * exactly the shared-stream trick above, applied one level up.
  */
-import { CANDIDATE_MIME_TYPES, type CaptureRegion } from '../lib/types'
+import { CANDIDATE_MIME_TYPES, MAX_ROLL_SECONDS, type CaptureRegion } from '../lib/types'
 import { concatAndTrimFront, concatClips, correctPlaybackSpeed } from './ffmpeg'
 import { clearClipStore, getClipBlob, saveClipBlob } from './clipStore'
 
 const CROP_FPS = 30
+
+// Deliberately NOT tied to the configured preRollSeconds (an earlier version
+// rotated as often as every preRollSeconds, minimum 5s) — each rotation does
+// real synchronous work (spins up a new MediaRecorder, finalizes the old
+// one's Blob) on the same thread the crop-canvas draw loop and every other
+// recorder run on, and doing that as often as every 5s was causing a
+// periodic stutter in *every* concurrently recording clip, not just standby's
+// own buffer. A longer, fixed cadence cuts how often that cost is paid,
+// regardless of what pre-roll window the scout actually configured.
+const STANDBY_ROTATION_SECONDS = 15
+// Enough trailing segments to cover the longest possible configured pre-roll
+// window (MAX_ROLL_SECONDS) even in the worst case — right after a fresh
+// rotation, with +1 segment of margin.
+const MAX_STANDBY_SEGMENTS = Math.ceil(MAX_ROLL_SECONDS / STANDBY_ROTATION_SECONDS) + 1
 
 // ---- the underlying capture stream — persists across multiple clips/sessions while pre-roll is armed or any session is active ----
 let stream: MediaStream | null = null // raw tabCapture stream
@@ -61,8 +75,7 @@ let standbyArmed = false
 let standbyRecorder: MediaRecorder | null = null
 let standbyChunks: Blob[] = []
 let standbySegmentStartedAt: number | null = null
-let standbySegments: StandbySegment[] = [] // oldest first, capped at 2
-let standbyRotationSeconds = 5
+let standbySegments: StandbySegment[] = [] // oldest first, capped at MAX_STANDBY_SEGMENTS
 let standbyRotationTimer: ReturnType<typeof setTimeout> | null = null
 
 // ---- capture-region crop pipeline (unchanged mechanics, shared across every session and standby) ----
@@ -271,7 +284,7 @@ function startStandbySegment() {
   standbyRecorder = rec
   standbyChunks = chunksRef
   standbySegmentStartedAt = startedAt
-  standbyRotationTimer = setTimeout(rotateStandbySegment, standbyRotationSeconds * 1000)
+  standbyRotationTimer = setTimeout(rotateStandbySegment, STANDBY_ROTATION_SECONDS * 1000)
 }
 
 /**
@@ -311,16 +324,15 @@ async function rotateStandbySegment() {
   startStandbySegment()
   const segment = await stopSegment(oldRec, oldChunks, oldStartedAt)
   standbySegments.push(segment)
-  if (standbySegments.length > 2) standbySegments.shift()
+  if (standbySegments.length > MAX_STANDBY_SEGMENTS) standbySegments.shift()
 }
 
-async function armStandby(streamId: string, region: CaptureRegion | null, bitrate: number, rotationSeconds: number) {
+async function armStandby(streamId: string, region: CaptureRegion | null, bitrate: number) {
   await ensureStreamReady(streamId, region, bitrate)
   standbyArmed = true
-  standbyRotationSeconds = rotationSeconds
   standbySegments = []
   startStandbySegment()
-  console.log('[offscreen] pre-roll armed, rotating every', rotationSeconds, 's')
+  console.log('[offscreen] pre-roll armed, rotating every', STANDBY_ROTATION_SECONDS, 's')
 }
 
 async function disarmStandby() {
@@ -464,7 +476,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   ;(async () => {
     switch (message.type) {
       case 'OFFSCREEN_ARM_STANDBY':
-        await armStandby(message.streamId, message.region, message.videoBitsPerSecond, message.rotationSeconds)
+        await armStandby(message.streamId, message.region, message.videoBitsPerSecond)
         sendResponse({ ok: true })
         break
       case 'OFFSCREEN_DISARM_STANDBY':
