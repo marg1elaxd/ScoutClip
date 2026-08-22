@@ -41,6 +41,10 @@ below.
 
 [MIT](LICENSE) © marg1elaxd
 
+## Contact
+
+Questions, bug reports, or update announcements: [@marg1elaxx on X](https://x.com/marg1elaxx).
+
 ## Switching the broadcast tab mid-match
 
 Some sites don't play the video on the page you started the match from at
