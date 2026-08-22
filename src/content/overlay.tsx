@@ -374,23 +374,36 @@ function createOverlay() {
   document.body.appendChild(host)
 
   // Shadow DOM isolates styling and DOM queries, but NOT event bubbling —
-  // a click inside the shadow tree still bubbles out through the host into
+  // an event inside the shadow tree still bubbles out through the host into
   // the page's own document. Some sites (live-TV/streaming pages especially)
-  // attach a page-wide click listener that hijacks focus or opens ads on
-  // ANY click anywhere on the page, which was firing for clicks on our own
-  // buttons too.
+  // attach page-wide click listeners that hijack focus or open ads on ANY
+  // click anywhere on the page, which was firing for clicks on our own
+  // buttons too. Keyboard events leak the same way — typing a player name
+  // into the "Add player" input bubbled out as keydown/keyup on the page's
+  // document, which sites with global keyboard shortcuts (YouTube: k/m/j/l,
+  // arrow keys, ...) happily acted on while the scout was just trying to
+  // type a name.
   //
   // This MUST be a bubble-phase listener (no `true` third arg), not capture.
   // Capture fires on the way *in*, before the event ever reaches the actual
-  // button inside the shadow tree — stopPropagation() there kills it before
-  // React's own click handlers (which run on the container inside the
+  // button/input inside the shadow tree — stopPropagation() there kills it
+  // before React's own handlers (which run on the container inside the
   // shadow tree) ever see it, which is exactly what a first attempt at this
   // did: it made the whole overlay unresponsive, not just quieter. Bubble
   // phase fires only after the event has already worked its way back up
   // through React's handling, so it only blocks it from continuing further
   // out to the page beyond this point.
   const stopLeaking = (e: Event) => e.stopPropagation()
-  for (const type of ['click', 'mousedown', 'mouseup', 'pointerdown', 'pointerup']) {
+  for (const type of [
+    'click',
+    'mousedown',
+    'mouseup',
+    'pointerdown',
+    'pointerup',
+    'keydown',
+    'keyup',
+    'keypress',
+  ]) {
     host.addEventListener(type, stopLeaking)
   }
 

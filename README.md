@@ -90,27 +90,35 @@ this kind of site, expect to do setup/retargeting from a normal tab and
 then rely on the overlay (Record/Stop/tag/player select) for the rest of
 the match.
 
-**Click isolation**: Shadow DOM (used for the overlay) isolates styling and
-DOM queries, but not event bubbling — a click inside the overlay still
-bubbles out to the host page's own `document`. Live-TV/streaming sites are
-often loaded with aggressive click-hijacking ad scripts that listen for
-*any* click on the page and redirect focus or open pop-unders — which was
-firing for clicks on the overlay's own buttons too, kicking focus back to
-whatever tab opened the popup window. `createOverlay` in
-[src/content/overlay.tsx](src/content/overlay.tsx) now stops every
-click/pointer event from propagating past the overlay's own host element
-once it's done bubbling through the shadow tree, so it never reaches the
-page's listeners.
+**Event isolation**: Shadow DOM (used for the overlay) isolates styling and
+DOM queries, but not event bubbling — a click, or a keystroke typed into the
+overlay's own inputs, still bubbles out to the host page's own `document`.
+Two separate real-world symptoms came from this:
+
+- Live-TV/streaming sites are often loaded with aggressive click-hijacking
+  ad scripts that listen for *any* click on the page and redirect focus or
+  open pop-unders — which was firing for clicks on the overlay's own
+  buttons too, kicking focus back to whatever tab opened the popup window.
+- Typing a name into the "Add player" field bubbled those keystrokes out as
+  keydown/keyup on the page's own `document` too — on sites with global
+  keyboard shortcuts (YouTube's k/m/j/l, arrow keys, etc.) this meant typing
+  a player's name was simultaneously pausing/seeking/muting the video the
+  scout was trying to watch.
+
+`createOverlay` in [src/content/overlay.tsx](src/content/overlay.tsx) stops
+every click/pointer/keyboard event from propagating past the overlay's own
+host element once it's done bubbling through the shadow tree, so none of it
+ever reaches the page's own listeners.
 
 This has to be a **bubble-phase** listener on the host, not capture — an
 earlier attempt used capture and made the whole overlay unresponsive
 instead of just quieter: capture fires on the way *in*, before the event
-ever reaches the actual button deep in the shadow tree, so calling
-`stopPropagation()` there killed the event before React's own click
-handlers (which run on the container inside the shadow tree) ever saw it.
-Bubble phase fires only after the event has already worked its way back up
-through React's own handling, so it only blocks it from continuing further
-out to the page beyond that point.
+ever reaches the actual button/input deep in the shadow tree, so calling
+`stopPropagation()` there killed the event before React's own handlers
+(which run on the container inside the shadow tree) ever saw it. Bubble
+phase fires only after the event has already worked its way back up through
+React's own handling, so it only blocks it from continuing further out to
+the page beyond that point.
 
 ## Keeping the recorded tab's video player alive when it loses focus
 
