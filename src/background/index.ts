@@ -545,6 +545,57 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       return snapshot()
     }
 
+    case 'DISCARD_CLIP': {
+      const playerName = message.playerName
+      const clip = pendingClips[playerName]
+      if (!clip) throw new Error('No clip pending for this player.')
+      try {
+        await sendToOffscreen({ type: 'OFFSCREEN_DISCARD_CLIP', sessionId: playerName })
+      } catch (err) {
+        // Non-fatal — worst case the offscreen document holds onto a blob
+        // it'll never be asked for again until the match ends and the whole
+        // clip cache clears anyway. Not worth blocking the discard over.
+        console.error('[background] failed to discard pending clip blob (non-fatal)', err)
+      }
+      delete pendingClips[playerName]
+      playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'idle' }
+      persist()
+      return snapshot()
+    }
+
+    case 'DELETE_PLAYER': {
+      const playerName = message.playerName
+      const status = playerRecordingStatus[playerName]
+      if (status === 'recording' || status === 'stopping' || status === 'saving' || status === 'pending-tag') {
+        throw new Error(`Finish ${playerName}'s current clip before removing them.`)
+      }
+      match = { ...match, players: match.players.filter((p) => p !== playerName) }
+      if (playerRecordingStatus[playerName] !== undefined) {
+        const next = { ...playerRecordingStatus }
+        delete next[playerName]
+        playerRecordingStatus = next
+      }
+      persist()
+      return snapshot()
+    }
+
+    case 'DELETE_CLIP': {
+      const clip = match.clips.find((c) => c.clipId === message.clipId)
+      if (!clip) throw new Error('That clip is no longer available.')
+      match = { ...match, clips: match.clips.filter((c) => c.clipId !== message.clipId) }
+      persist()
+      try {
+        await sendToOffscreen({ type: 'OFFSCREEN_DELETE_CLIP', clipId: message.clipId })
+      } catch (err) {
+        // Non-fatal — the clip is already gone from match.clips (what the UI
+        // and compilation both actually read), so the scout sees it removed
+        // either way. Worst case a stale blob lingers in IndexedDB until New
+        // Session clears the whole cache.
+        console.error('[background] failed to delete cached clip blob (non-fatal)', err)
+      }
+      return snapshot()
+    }
+
     case 'COMPILE_CLIPS': {
       if (message.clipIds.length === 0) throw new Error('Select at least one clip to compile.')
       const selected = message.clipIds

@@ -538,6 +538,22 @@ export default function App() {
     }
   }
 
+  async function handleDeletePlayer(player: string) {
+    if (!window.confirm(`Remove ${player} from the roster? Their saved clips stay untouched and stay listed here.`)) return
+    await call({ type: 'DELETE_PLAYER', playerName: player })
+  }
+
+  async function handleDeleteClip(clipId: string, label: string) {
+    if (!window.confirm(`Delete "${label}" from the list? The downloaded file stays on disk.`)) return
+    await call({ type: 'DELETE_CLIP', clipId })
+    setSelectedClipIds((prev) => {
+      if (!prev.has(clipId)) return prev
+      const next = new Set(prev)
+      next.delete(clipId)
+      return next
+    })
+  }
+
   const lastSavedName = lastSavedPath?.split('/').pop() ?? null
   const lastCompilationName = lastCompilationPath?.split('/').pop() ?? null
 
@@ -685,18 +701,34 @@ export default function App() {
                       ))}
                     </div>
                   )}
-                  <button
-                    className="full"
-                    onClick={() => {
-                      call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
-                      setTagCategoryByPlayer((prev) => {
-                        const { [p]: _drop, ...rest } = prev
-                        return rest
-                      })
-                    }}
-                  >
-                    Save without tag
-                  </button>
+                  <div className="row">
+                    <button
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
+                        setTagCategoryByPlayer((prev) => {
+                          const { [p]: _drop, ...rest } = prev
+                          return rest
+                        })
+                      }}
+                    >
+                      Save without tag
+                    </button>
+                    <button
+                      className="danger"
+                      style={{ flex: 1 }}
+                      onClick={() => {
+                        if (!window.confirm(`Discard ${p}'s clip? It won't be saved.`)) return
+                        call({ type: 'DISCARD_CLIP', playerName: p })
+                        setTagCategoryByPlayer((prev) => {
+                          const { [p]: _drop, ...rest } = prev
+                          return rest
+                        })
+                      }}
+                    >
+                      Discard
+                    </button>
+                  </div>
                 </div>
               )}
             </div>
@@ -741,12 +773,16 @@ export default function App() {
 
       {showClips && match.clips.length > 0 && (
         <div className="clip-list">
-          {match.players
-            .filter((p) => match.clips.some((c) => c.playerName === p))
-            .map((player) => {
+          {
+            // Grouped by whoever actually has clips, not match.players — a
+            // deleted player's chip stops appearing, but their already-saved
+            // clips stay listed here (tag/compile/delete still work on them)
+            // exactly like the files on disk, which are also untouched.
+            Array.from(new Set(match.clips.map((c) => c.playerName))).map((player) => {
               const playerClips = match.clips.filter((c) => c.playerName === player)
               const playerClipIds = playerClips.map((c) => c.clipId)
               const allSelected = playerClipIds.every((id) => selectedClipIds.has(id))
+              const isActivePlayer = match.players.includes(player)
               return (
               <div key={player} className="clip-group">
                 <div className="clip-group-header">
@@ -758,6 +794,11 @@ export default function App() {
                     />
                     <span>{player}</span>
                   </label>
+                  {isActivePlayer && (
+                    <button className="icon-btn" title="Remove player" aria-label="Remove player" onClick={() => handleDeletePlayer(player)}>
+                      ✕
+                    </button>
+                  )}
                 </div>
                 {playerClips
                   .sort((a, b) => a.minute - b.minute)
@@ -773,12 +814,18 @@ export default function App() {
                           #{clip.clipNumber} · {clip.actionType ?? 'Untagged'} · {clip.minute}′
                         </span>
                       </label>
-                      <button onClick={() => chrome.downloads.show(clip.downloadId)}>Show</button>
+                      <div className="row" style={{ gap: 4 }}>
+                        <button onClick={() => chrome.downloads.show(clip.downloadId)}>Show</button>
+                        <button onClick={() => handleDeleteClip(clip.clipId, `${clip.actionType ?? 'Untagged'} · ${clip.minute}′`)}>
+                          Delete
+                        </button>
+                      </div>
                     </div>
                   ))}
               </div>
               )
-            })}
+            })
+          }
 
           <label className="checkbox-row">
             <input type="checkbox" checked={exportAsMp4} onChange={(e) => setExportAsMp4(e.target.checked)} />

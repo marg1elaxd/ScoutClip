@@ -350,6 +350,10 @@ button:disabled {
 }
 
 .clip-group-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 6px;
   font-size: 12px;
   font-weight: 600;
   color: #9aa4ad;

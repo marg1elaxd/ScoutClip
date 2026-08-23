@@ -306,18 +306,32 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                       ))}
                     </div>
                   )}
-                  <button
-                    className="full"
-                    onClick={() => {
-                      call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
-                      setTagCategoryByPlayer((prev) => {
-                        const { [p]: _drop, ...rest } = prev
-                        return rest
-                      })
-                    }}
-                  >
-                    Save without tag
-                  </button>
+                  <div className="category-row">
+                    <button
+                      onClick={() => {
+                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
+                        setTagCategoryByPlayer((prev) => {
+                          const { [p]: _drop, ...rest } = prev
+                          return rest
+                        })
+                      }}
+                    >
+                      Save without tag
+                    </button>
+                    <button
+                      className="danger"
+                      onClick={() => {
+                        if (!window.confirm(`Discard ${p}'s clip? It won't be saved.`)) return
+                        call({ type: 'DISCARD_CLIP', playerName: p })
+                        setTagCategoryByPlayer((prev) => {
+                          const { [p]: _drop, ...rest } = prev
+                          return rest
+                        })
+                      }}
+                    >
+                      Discard
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

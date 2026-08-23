@@ -49,6 +49,17 @@ export async function getClipBlob(clipId: string): Promise<Blob> {
   return blob
 }
 
+export async function deleteClipBlob(clipId: string): Promise<void> {
+  const db = await openDb()
+  await new Promise<void>((resolve, reject) => {
+    const tx = db.transaction(STORE_NAME, 'readwrite')
+    tx.objectStore(STORE_NAME).delete(clipId)
+    tx.oncomplete = () => resolve()
+    tx.onerror = () => reject(tx.error ?? new Error('Failed to delete clip blob.'))
+  })
+  db.close()
+}
+
 export async function clearClipStore(): Promise<void> {
   const db = await openDb()
   await new Promise<void>((resolve, reject) => {

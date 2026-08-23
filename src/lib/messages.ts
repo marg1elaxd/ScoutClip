@@ -46,6 +46,23 @@ export type Message =
   | { type: 'START_RECORDING'; playerName: string; streamId?: string }
   | { type: 'STOP_RECORDING'; playerName: string }
   | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null }
+  // Cancels a clip awaiting a tag without saving/downloading it at all —
+  // for "clipped by mistake, don't want it lingering." Only valid while
+  // that player's clip is actually pending a tag.
+  | { type: 'DISCARD_CLIP'; playerName: string }
+  // Removes a player from the active roster so their chip stops appearing
+  // (and can't be clicked to start a new recording) — their already-saved
+  // clips and files on disk are untouched, and stay in match.clips/the
+  // Clips list so they can still be tagged/compiled/deleted individually.
+  // Blocked while that player has anything in flight (recording, pending a
+  // tag, saving), same as most other match-state-mutating actions.
+  | { type: 'DELETE_PLAYER'; playerName: string }
+  // Removes one clip from the in-match clip list (and the offscreen
+  // document's IndexedDB cache, so it's no longer eligible for
+  // compilation) — the already-downloaded file on disk is untouched,
+  // exactly like DELETE_PLAYER: this only ever forgets what the extension
+  // itself is tracking, never deletes anything from the filesystem.
+  | { type: 'DELETE_CLIP'; clipId: string }
   // Compilation output matches the source clips' own format (WebM by
   // default) unless exportAsMp4 is set, in which case the offscreen
   // document re-encodes the finished compilation to H.264/AAC MP4 as a

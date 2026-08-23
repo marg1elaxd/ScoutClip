@@ -31,7 +31,7 @@
  */
 import { CANDIDATE_MIME_TYPES, MAX_ROLL_SECONDS, type CaptureRegion } from '../lib/types'
 import { concatAndTrimFront, concatClips, convertToMp4, correctPlaybackSpeed } from './ffmpeg'
-import { clearClipStore, getClipBlob, saveClipBlob } from './clipStore'
+import { clearClipStore, deleteClipBlob, getClipBlob, saveClipBlob } from './clipStore'
 
 const CROP_FPS = 30
 
@@ -555,6 +555,11 @@ async function takePendingClip(sessionId: string): Promise<{ url: string; mimeTy
   return { url, mimeType, clipId }
 }
 
+/** Drops a pending clip's blob without ever saving/downloading it — "clipped by mistake." A no-op if there's nothing pending, so it's safe to call defensively. */
+function discardPendingClip(sessionId: string): void {
+  pendingBlobs.delete(sessionId)
+}
+
 /**
  * Compiles previously-saved clips (by clipId, from the match's clip list)
  * into one output, in the order given. If `exportAsMp4` is set, the
@@ -608,6 +613,14 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         break
       case 'OFFSCREEN_CLEAR_CLIP_CACHE':
         await clearClipStore()
+        sendResponse({ ok: true })
+        break
+      case 'OFFSCREEN_DISCARD_CLIP':
+        discardPendingClip(message.sessionId)
+        sendResponse({ ok: true })
+        break
+      case 'OFFSCREEN_DELETE_CLIP':
+        await deleteClipBlob(message.clipId)
         sendResponse({ ok: true })
         break
       case 'OFFSCREEN_REVOKE':

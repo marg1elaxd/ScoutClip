@@ -454,6 +454,34 @@ Phase 4 compilation picker will need directly and keeps the data model
 simple; a full historical library across matches would need its own screen
 and storage strategy if that's wanted later.
 
+- **Discarding a clip you didn't mean to take** — the tag panel (popup and
+  overlay both) has a **Discard** button next to "Save without tag." Unlike
+  every other clip action, this never touches `chrome.downloads` at all —
+  the clip is still just an in-memory blob at that point (tagging happens
+  *after* Stop, before the file is ever written), so discarding is simply
+  dropping that blob (`DISCARD_CLIP` → `OFFSCREEN_DISCARD_CLIP` →
+  `pendingBlobs.delete(sessionId)` in
+  [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) rather than
+  deleting anything that was ever saved.
+- **Deleting a player** (✕ next to their name in the Clips section) removes
+  them from the active roster — their chip stops appearing, so they can't be
+  clicked to start a new recording — but doesn't touch anything already
+  saved: their clips stay in the list (still taggable — no, already tagged
+  by this point — still compilable and individually deletable) and their
+  files stay on disk exactly like every other delete-ish action in this
+  app. Blocked while that player has a clip in flight (recording, pending a
+  tag, saving), same guard as most match-state-mutating actions. The Clips
+  section groups by whoever actually *has* clips (not the active roster),
+  so a deleted player's history doesn't just disappear from view.
+- **Deleting a clip** (a Delete button next to Show, per clip row) removes
+  it from `match.clips` and the offscreen document's IndexedDB cache
+  (`DELETE_CLIP` → `OFFSCREEN_DELETE_CLIP` → `deleteClipBlob` in
+  [src/offscreen/clipStore.ts](src/offscreen/clipStore.ts)) — the clip stops
+  being listed or eligible for compilation, but same principle as
+  everything else here: the already-downloaded file on disk is never
+  touched. This extension never deletes anything from the filesystem; it
+  only ever forgets what it's tracking.
+
 ## Pre-roll and post-roll (Settings)
 
 Both off by default — Record/Stop click exactly when you press them, same
