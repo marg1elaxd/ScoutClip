@@ -248,6 +248,20 @@ another that's still recording.
   continuously and independently of whatever sessions are or aren't active;
   at Stop, whatever standby segment(s) cover *that session's* look-back
   window get losslessly spliced onto the front of its own recording.
+- **ffmpeg.wasm operations are serialized, not concurrent**: there's exactly
+  one shared ffmpeg.wasm instance for the whole offscreen document
+  ([src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)), and every operation
+  writes to fixed filenames in its virtual filesystem (`raw0.ext`,
+  `list.txt`, `joined.ext`, ...). That's fine for one job at a time, but two
+  players stopping close together can each trigger their own pre-roll
+  splice around the same moment — with nothing serializing access, their
+  file operations interleaved and corrupted the virtual filesystem,
+  surfaced as ffmpeg's own `Aborted()` plus an `ErrnoError: FS error` on the
+  JS side, logged as `[offscreen] pre-roll trim failed` (the clip still
+  saved, just without pre-roll — the existing fallback for *any* splice
+  failure). Every ffmpeg-touching export now runs through a simple
+  promise-chained queue so only one job ever touches the shared instance at
+  a time, regardless of how many callers ask for one concurrently.
 
 ## Adding a player mid-match
 

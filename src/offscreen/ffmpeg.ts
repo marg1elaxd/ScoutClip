@@ -41,6 +41,35 @@ function getFFmpeg(): Promise<FFmpeg> {
   return ffmpegPromise
 }
 
+/**
+ * There's exactly one shared ffmpeg.wasm instance for the whole offscreen
+ * document (getFFmpeg's singleton above), and every operation here writes
+ * to fixed filenames in its virtual filesystem (raw0.ext, list.txt,
+ * joined.ext, ...). That's fine as long as only one logical job touches it
+ * at a time — but with concurrent multi-player recording, two players
+ * stopping close together can each trigger their own pre-roll splice
+ * around the same moment, and nothing was stopping those from actually
+ * running concurrently. Interleaved file writes/reads/deletes from two
+ * unrelated jobs sharing the same names corrupted the virtual filesystem —
+ * surfaced as ffmpeg's own "Aborted()" plus an ErrnoError "FS error" on the
+ * JS side. Every exported function below is queued through this so ffmpeg
+ * only ever does one job at a time, regardless of how many callers ask for
+ * one concurrently.
+ */
+let ffmpegQueue: Promise<unknown> = Promise.resolve()
+
+function queued<T>(task: () => Promise<T>): Promise<T> {
+  const result = ffmpegQueue.then(task, task)
+  // Chain the queue itself off a version that never rejects, so one job's
+  // failure doesn't wedge every job queued after it — only `result` (this
+  // call's own promise) should reject for its caller.
+  ffmpegQueue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
+}
+
 export interface TrimSegment {
   blob: Blob
   /** Container extension shared by every segment — they always match here, all recorded from the same MediaRecorder profile. */
@@ -127,7 +156,11 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
  * Because -c copy can only cut on keyframe boundaries, the trim isn't
  * frame-exact; that's fine for a "roughly N seconds before" pre-roll.
  */
-export async function concatAndTrimFront(segments: TrimSegment[], offsetSeconds: number): Promise<Blob> {
+export function concatAndTrimFront(segments: TrimSegment[], offsetSeconds: number): Promise<Blob> {
+  return queued(() => concatAndTrimFrontImpl(segments, offsetSeconds))
+}
+
+async function concatAndTrimFrontImpl(segments: TrimSegment[], offsetSeconds: number): Promise<Blob> {
   if (segments.length === 0) throw new Error('concatAndTrimFront called with no segments.')
   const ffmpeg = await getFFmpeg()
   const { joined, ext, cleanup } = await writeAndConcat(ffmpeg, segments)
@@ -153,7 +186,11 @@ export async function concatAndTrimFront(segments: TrimSegment[], offsetSeconds:
  * reel. Same stream-copy concat as pre-roll trimming, just without the trim
  * step: no re-encoding, so output quality exactly matches the source clips.
  */
-export async function concatClips(clips: TrimSegment[]): Promise<Blob> {
+export function concatClips(clips: TrimSegment[]): Promise<Blob> {
+  return queued(() => concatClipsImpl(clips))
+}
+
+async function concatClipsImpl(clips: TrimSegment[]): Promise<Blob> {
   if (clips.length === 0) throw new Error('concatClips called with no clips.')
   const ffmpeg = await getFFmpeg()
   const { joined, ext, cleanup } = await writeAndConcat(ffmpeg, clips)
@@ -177,8 +214,12 @@ export async function concatClips(clips: TrimSegment[]): Promise<Blob> {
  * 1x-2x range this app offers — atempo only supports 0.5-2.0 per instance,
  * which is exactly 1/gameSpeed for gameSpeed in [1, 2]).
  */
-export async function correctPlaybackSpeed(blob: Blob, extension: string, gameSpeed: number): Promise<Blob> {
-  if (gameSpeed === 1) return blob
+export function correctPlaybackSpeed(blob: Blob, extension: string, gameSpeed: number): Promise<Blob> {
+  if (gameSpeed === 1) return Promise.resolve(blob)
+  return queued(() => correctPlaybackSpeedImpl(blob, extension, gameSpeed))
+}
+
+async function correctPlaybackSpeedImpl(blob: Blob, extension: string, gameSpeed: number): Promise<Blob> {
   const ffmpeg = await getFFmpeg()
   const input = `speed_in.${extension}`
   const output = `speed_out.${extension}`
