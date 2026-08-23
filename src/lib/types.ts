@@ -43,6 +43,24 @@ export interface SavedClip {
   clipId: string
 }
 
+/**
+ * A quick text note taken live, independent of clips entirely — for
+ * observations that don't warrant (or come before/after) an actual
+ * recording. `playerName: null` means a general match note, not tied to
+ * anyone specific. `minute` is always recorded (cheap to store); whether
+ * it's actually *shown* anywhere is a display preference
+ * (`RecordingSettings.includeMinuteInNotes`), not a recording-time choice —
+ * so toggling that setting mid-match doesn't retroactively lose data either
+ * way.
+ */
+export interface MatchNote {
+  id: string
+  playerName: string | null
+  text: string
+  minute: number
+  savedAt: number
+}
+
 export interface MatchState {
   matchInfo: string
   players: string[]
@@ -58,6 +76,8 @@ export interface MatchState {
   gameSpeed: number
   /** Scoped to the current match only — reset on the next START_MATCH. */
   clips: SavedClip[]
+  /** Scoped to the current match only, same as clips — reset on the next START_MATCH. */
+  notes: MatchNote[]
 }
 
 /** Common playback-speed increments a broadcast is likely to be watched at. */
@@ -94,6 +114,8 @@ export interface RecordingSettings {
   postRollSeconds: number
   /** The two top-level categories (Offensive/Defensive) are fixed; their subcategory lists are user-editable — see Settings. */
   actionCategories: ActionCategories
+  /** Off by default — whether the match minute is shown alongside each note (in the Notes list and in "Copy raw notes"). Doesn't affect whether the minute is recorded, only whether it's displayed. */
+  includeMinuteInNotes: boolean
 }
 
 export const DEFAULT_SETTINGS: RecordingSettings = {
@@ -102,6 +124,7 @@ export const DEFAULT_SETTINGS: RecordingSettings = {
   postRollEnabled: false,
   postRollSeconds: 5,
   actionCategories: DEFAULT_ACTION_CATEGORIES,
+  includeMinuteInNotes: false,
 }
 
 export const MIN_ROLL_SECONDS = 1

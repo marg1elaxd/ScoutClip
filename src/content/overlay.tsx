@@ -21,9 +21,12 @@ import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { sendMessage, type StateSnapshot } from '../lib/messages'
 import type { RecordingStatus } from '../lib/types'
+import { GENERAL_NOTE_LABEL } from '../lib/notes'
 
 const HOST_ID = 'scout-clip-recorder-overlay-host'
 const POLL_MS = 3000
+/** Sentinel key for the general (not-tied-to-a-player) note field/target, alongside real player names in the same open-fields list. */
+const GENERAL_NOTE_KEY = '__general__'
 
 const OVERLAY_CSS = `
   :host, * { box-sizing: border-box; }
@@ -82,6 +85,11 @@ const OVERLAY_CSS = `
   .player-rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .player-record-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
   .player-chip-row { display: flex; align-items: center; gap: 4px; }
+  .note-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
+  .note-field-row { background: #1a2027; border: 1px solid #2b333a; border-radius: 8px; padding: 6px 8px; }
+  .note-field-label { display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #9aa4ad; margin-bottom: 4px; }
+  .note-field-label button { padding: 2px 6px; font-size: 10px; }
+  .note-field-row input[type='text'] { width: 100%; box-sizing: border-box; padding: 5px 7px; border-radius: 6px; border: 1px solid #2b333a; background: #101418; color: #e8ecef; font-size: 12px; font-family: inherit; }
   .player-chip { display: inline-flex; align-items: center; gap: 6px; }
   .player-chip.live { background: #d1453b; border-color: #d1453b; color: white; font-weight: 600; }
   .player-chip.busy { opacity: 0.6; }
@@ -123,6 +131,12 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
+  // Note-taking: any number of note fields can be open at once (one per
+  // player, plus at most one general), stacked above the roster rather than
+  // inline per-chip, so writing a note never blocks clicking a chip to
+  // record something that just happened.
+  const [openNoteTargets, setOpenNoteTargets] = useState<string[]>([])
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
 
   async function refresh() {
     try {
@@ -216,6 +230,33 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     setShowAddPlayer(false)
   }
 
+  function toggleNoteField(target: string) {
+    setOpenNoteTargets((prev) => (prev.includes(target) ? prev.filter((t) => t !== target) : [...prev, target]))
+  }
+
+  function closeNoteField(target: string) {
+    setOpenNoteTargets((prev) => prev.filter((t) => t !== target))
+    setNoteDrafts((prev) => {
+      const { [target]: _drop, ...rest } = prev
+      return rest
+    })
+  }
+
+  async function handleSendNote(target: string) {
+    const text = (noteDrafts[target] ?? '').trim()
+    if (!text) {
+      closeNoteField(target)
+      return
+    }
+    const playerName = target === GENERAL_NOTE_KEY ? null : target
+    try {
+      await call({ type: 'ADD_NOTE', playerName, text })
+      closeNoteField(target)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   async function handleDeletePlayer(player: string) {
     if (!window.confirm(`Remove ${player} from the roster? Their saved clips stay untouched.`)) return
     await call({ type: 'DELETE_PLAYER', playerName: player })
@@ -248,6 +289,32 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
         </div>
       </div>
 
+      {openNoteTargets.length > 0 && (
+        <div className="note-fields">
+          {openNoteTargets.map((target) => (
+            <div key={target} className="note-field-row">
+              <div className="note-field-label">
+                <span>Note for: {target === GENERAL_NOTE_KEY ? GENERAL_NOTE_LABEL : target}</span>
+                <button title="Cancel note" aria-label="Cancel note" onClick={() => closeNoteField(target)}>
+                  ✕
+                </button>
+              </div>
+              <input
+                type="text"
+                autoFocus
+                value={noteDrafts[target] ?? ''}
+                onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [target]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSendNote(target)
+                  if (e.key === 'Escape') closeNoteField(target)
+                }}
+                placeholder="Type a note, Enter to save…"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="player-rows">
         {match.players.map((p) => {
           const status = statusFor(p)
@@ -269,6 +336,9 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                   {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
                   {p}
                   {status === 'saving' ? ' · saving…' : ''}
+                </button>
+                <button className="chip-remove" title="Add note" aria-label={`Note for ${p}`} onClick={() => toggleNoteField(p)}>
+                  ✎
                 </button>
                 {status === 'idle' && (
                   <button
@@ -352,6 +422,9 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
             +
           </button>
         )}
+        <button className="chip" title="General note" onClick={() => toggleNoteField(GENERAL_NOTE_KEY)}>
+          ✎ General
+        </button>
       </div>
 
       {showAddPlayer && (
@@ -379,7 +452,8 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
       {error && <div className="error">{error}</div>}
 
       <div className="footer">
-        min {currentMinute} · {match.clips.length} clip{match.clips.length === 1 ? '' : 's'}
+        min {currentMinute} · {match.clips.length} clip{match.clips.length === 1 ? '' : 's'} ·{' '}
+        {match.notes.length} note{match.notes.length === 1 ? '' : 's'}
       </div>
     </div>
   )

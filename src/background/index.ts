@@ -1,4 +1,4 @@
-import type { CaptureRegion, MatchState, RecordingSettings, RecordingStatus, PendingClip } from '../lib/types'
+import type { CaptureRegion, MatchState, MatchNote, RecordingSettings, RecordingStatus, PendingClip } from '../lib/types'
 import { DEFAULT_SETTINGS, RECORDING_PROFILE } from '../lib/types'
 import {
   buildClipFilename,
@@ -36,6 +36,7 @@ function defaultMatch(): MatchState {
     captureRegion: null,
     gameSpeed: 1,
     clips: [],
+    notes: [],
   }
 }
 
@@ -625,6 +626,24 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       console.log('[background] compilation queued', { downloadId, path, mimeType, clips: selected.length })
       scheduleRevoke(downloadId, url)
       lastCompilationPath = path
+      persist()
+      return snapshot()
+    }
+
+    case 'ADD_NOTE': {
+      const text = message.text.trim()
+      if (!text) throw new Error('Note text cannot be empty.')
+      if (message.playerName != null && !match.players.includes(message.playerName)) {
+        throw new Error('Unknown player.')
+      }
+      const note: MatchNote = {
+        id: crypto.randomUUID(),
+        playerName: message.playerName,
+        text,
+        minute: currentMinute(),
+        savedAt: Date.now(),
+      }
+      match = { ...match, notes: [...match.notes, note] }
       persist()
       return snapshot()
     }

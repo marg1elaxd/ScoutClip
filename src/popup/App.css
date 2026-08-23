@@ -159,6 +159,34 @@ button:disabled {
   gap: 4px;
 }
 
+.note-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.note-field-row {
+  background: #1a2027;
+  border: 1px solid #2b333a;
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+
+.note-field-label {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-size: 11px;
+  color: #9aa4ad;
+  margin-bottom: 4px;
+}
+
+.note-field-row input[type='text'] {
+  padding: 6px 8px;
+  font-size: 12px;
+}
+
 .player-chip {
   display: inline-flex;
   align-items: center;

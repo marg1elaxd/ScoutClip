@@ -10,6 +10,10 @@ import {
   type RecordingStatus,
 } from '../lib/types'
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
+import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
+
+/** Sentinel key for the general (not-tied-to-a-player) note field/target, alongside real player names in the same open-fields list. */
+const GENERAL_NOTE_KEY = '__general__'
 
 function getStreamIdForActiveTab(): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -114,6 +118,15 @@ export default function App() {
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
   const [retargeting, setRetargeting] = useState(false)
+  // Note-taking: any number of note fields can be open at once (one per
+  // player, plus at most one general), stacked above the roster rather than
+  // inline per-chip, so writing a note never blocks clicking a chip to
+  // record something that just happened. openNoteTargets is ordered (stable
+  // stacking); noteDrafts holds each field's in-progress text keyed the
+  // same way.
+  const [openNoteTargets, setOpenNoteTargets] = useState<string[]>([])
+  const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
+  const [showNotes, setShowNotes] = useState(false)
 
   useEffect(() => {
     sendMessage<StateSnapshot>({ type: 'GET_STATE' }).then(setState)
@@ -244,6 +257,15 @@ export default function App() {
           background buffering, so it only (re)arms when you hit Start Match; toggling it mid-match takes effect
           next match, not immediately.
         </div>
+
+        <label className="checkbox-row">
+          <input
+            type="checkbox"
+            checked={draft.includeMinuteInNotes}
+            onChange={(e) => setSettingsDraft({ ...draft, includeMinuteInNotes: e.target.checked })}
+          />
+          Show the match minute alongside each note
+        </label>
 
         <CategoryEditor
           label="Offensive"
@@ -540,6 +562,42 @@ export default function App() {
     })
   }
 
+  function toggleNoteField(target: string) {
+    setOpenNoteTargets((prev) => (prev.includes(target) ? prev.filter((t) => t !== target) : [...prev, target]))
+  }
+
+  function closeNoteField(target: string) {
+    setOpenNoteTargets((prev) => prev.filter((t) => t !== target))
+    setNoteDrafts((prev) => {
+      const { [target]: _drop, ...rest } = prev
+      return rest
+    })
+  }
+
+  async function handleSendNote(target: string) {
+    const text = (noteDrafts[target] ?? '').trim()
+    if (!text) {
+      closeNoteField(target)
+      return
+    }
+    const playerName = target === GENERAL_NOTE_KEY ? null : target
+    try {
+      await call({ type: 'ADD_NOTE', playerName, text })
+      closeNoteField(target)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
+  async function handleCopyRawNotes() {
+    const text = formatRawNotes(match.notes, match.players, settings.includeMinuteInNotes)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   const lastSavedName = lastSavedPath?.split('/').pop() ?? null
   const lastCompilationName = lastCompilationPath?.split('/').pop() ?? null
 
@@ -627,6 +685,37 @@ export default function App() {
         </div>
       )}
 
+      {openNoteTargets.length > 0 && (
+        <div className="note-fields">
+          {openNoteTargets.map((target) => (
+            <div key={target} className="note-field-row">
+              <div className="note-field-label">
+                <span>Note for: {target === GENERAL_NOTE_KEY ? GENERAL_NOTE_LABEL : target}</span>
+                <button
+                  className="icon-btn"
+                  title="Cancel note"
+                  aria-label="Cancel note"
+                  onClick={() => closeNoteField(target)}
+                >
+                  ✕
+                </button>
+              </div>
+              <input
+                type="text"
+                autoFocus
+                value={noteDrafts[target] ?? ''}
+                onChange={(e) => setNoteDrafts((prev) => ({ ...prev, [target]: e.target.value }))}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') handleSendNote(target)
+                  if (e.key === 'Escape') closeNoteField(target)
+                }}
+                placeholder="Type a note, Enter to save…"
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="player-rows">
         {match.players.map((p) => {
           const status = statusFor(p)
@@ -651,6 +740,9 @@ export default function App() {
                   {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
                   {p}
                   {status === 'saving' ? ' · saving…' : ''}
+                </button>
+                <button className="icon-btn" title="Add note" aria-label={`Note for ${p}`} onClick={() => toggleNoteField(p)}>
+                  ✎
                 </button>
                 {status === 'idle' && (
                   <button
@@ -736,6 +828,9 @@ export default function App() {
             +
           </button>
         )}
+        <button className="chip" title="General note" onClick={() => toggleNoteField(GENERAL_NOTE_KEY)}>
+          ✎ General
+        </button>
       </div>
 
       {showAddPlayer && (
@@ -837,6 +932,37 @@ export default function App() {
             onClick={handleCompile}
           >
             {compiling ? 'Compiling…' : `Compile selected (${selectedClipIds.size})`}
+          </button>
+        </div>
+      )}
+
+      <button className="clip-toggle" onClick={() => setShowNotes((s) => !s)}>
+        Notes ({match.notes.length}) {showNotes ? '▲' : '▼'}
+      </button>
+
+      {showNotes && match.notes.length > 0 && (
+        <div className="clip-list">
+          {[null, ...match.players].map((player) => {
+            const playerNotes = match.notes.filter((n) => n.playerName === player)
+            if (playerNotes.length === 0) return null
+            return (
+              <div key={player ?? GENERAL_NOTE_KEY} className="clip-group">
+                <div className="clip-group-header">
+                  <span>{player ?? GENERAL_NOTE_LABEL}</span>
+                </div>
+                {playerNotes.map((note) => (
+                  <div key={note.id} className="clip-row">
+                    <span>
+                      {note.text}
+                      {settings.includeMinuteInNotes ? ` (${note.minute}′)` : ''}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )
+          })}
+          <button className="full" onClick={handleCopyRawNotes}>
+            Copy raw notes
           </button>
         </div>
       )}

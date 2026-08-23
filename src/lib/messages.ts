@@ -67,6 +67,9 @@ export type Message =
   // by default) — an MP4-export option was tried and reverted; see
   // "Compilation (Phase 4)" in the README for why.
   | { type: 'COMPILE_CLIPS'; clipIds: string[] }
+  // A quick text note, independent of the clip/recording pipeline entirely
+  // — playerName null means a general match note, not tied to anyone.
+  | { type: 'ADD_NOTE'; playerName: string | null; text: string }
   | { type: 'NEW_SESSION' }
 
 export interface StateSnapshot {

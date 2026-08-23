@@ -465,6 +465,50 @@ popup window.
   addressed here (would need Fullscreen API listeners to re-parent the
   overlay into the fullscreened element).
 
+## Notes
+
+Independent of the clip/recording pipeline entirely — a quick way to jot a
+text observation on a player (or on the match in general) without it needing
+to become a recording. Useful for things worth remembering that don't
+warrant a clip, or context to go alongside one taken moments before/after.
+
+- **Taking a note** — click the ✎ icon next to a player chip, or the
+  **✎ General** button next to "+ Add player" for a note not tied to
+  anyone. A text field opens directly above the player list (not overlaying
+  the chips, so you can still start a recording while a note field is open).
+  Press **Enter** to save and close it, **Escape** or the ✕ to cancel
+  without saving. Multiple note fields — for different players, or a player
+  and General at once — can be open at the same time; each is independent
+  state, so opening a second doesn't lose a draft in the first.
+- **Storage** — notes are appended to `match.notes` (`ADD_NOTE` →
+  background), scoped to the current match only, same as clips (reset on the
+  next `START_MATCH`). Each note records `playerName` (`null` for General),
+  `text`, the match `minute` it was taken at, and a timestamp.
+- **Reviewing notes** — the popup has a **Notes (N)** toggle section,
+  mirroring the Clips section: grouped by player (General first), listing
+  each note's text. A **Copy raw notes** button
+  (`formatRawNotes` in `src/lib/notes.ts`) copies everything to the
+  clipboard as flat, semicolon-joined lines per player — e.g.
+  `Player Name - note one; note two` — deliberately unstructured, meant to
+  be pasted straight into Obsidian, or into an LLM prompt to sort into
+  whatever categories your own workflow uses, rather than read as a
+  polished document on its own.
+- **Match minute display** — off by default; a Settings checkbox
+  ("Show the match minute alongside each note") appends `(N′)` to each note
+  both in the review list and in the copied raw text. The minute is always
+  recorded regardless of this setting — it only controls whether it's
+  *shown* — so toggling it mid-match doesn't lose or gain data either way.
+- **Overlay** — the in-page overlay (for taking notes without switching to
+  the popup while watching the broadcast) has the same note-taking controls
+  (icon, General button, stacked fields) but not the review/Copy section,
+  consistent with Settings/Compile/clip-review already being popup-only.
+  The same keystroke-leak fix used for player names applies here too — typing
+  in a note field doesn't reach the page underneath.
+- **What this isn't (yet)** — notes currently live only inside the
+  extension's local storage; there's no live export to a file (Obsidian
+  vault or otherwise). That's a deliberate next step, not an oversight — see
+  the project roadmap if you want to track it.
+
 ## Clip list (current match only)
 
 The main screen lists every clip saved so far in the running match, grouped
