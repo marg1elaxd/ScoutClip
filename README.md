@@ -367,6 +367,17 @@ quality exactly matches the source clips).
   concatenating multiple independent recorder segments — this runs once, on
   one single already-finished, already-concatenated file, the same shape of
   operation as game speed correction, which has been reliable throughout.
+  - Did hit one real, separate issue: `libx264` requires **even**
+    width/height (chroma planes are subsampled 2x2 in yuv420p) — VP9 has
+    no such restriction, so a capture-region recording's cropped
+    dimensions (whatever the scout happened to drag, with no reason to
+    land on an even number) worked fine in WebM but failed outright
+    encoding to MP4 (`[libx264] width not divisible by 2` /
+    `Error initializing output stream`). Both `convertToMp4` and game
+    speed correction's MP4 branch now scale down to the nearest even
+    number first (`scale=trunc(iw/2)*2:trunc(ih/2)*2`, chained into the
+    existing filter graph) — trims at most 1px off either edge, not
+    noticeable.
 - **The real gap this had to close first**: `chrome.downloads` writes clips
   to disk but has no way to read a saved file's bytes back — so compiling
   needs the actual video data from somewhere. The offscreen document now

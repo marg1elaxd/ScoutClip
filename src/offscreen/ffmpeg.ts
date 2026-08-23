@@ -324,6 +324,14 @@ async function correctPlaybackSpeedImpl(blob: Blob, extension: string, gameSpeed
   const videoArgs = isMp4
     ? ['-c:v', 'libx264', '-preset', 'ultrafast', '-b:v', '5M']
     : ['-c:v', 'libvpx-vp9', '-deadline', 'realtime', '-cpu-used', '8', '-b:v', '5M']
+  // libx264 (unlike VP9) requires even width/height — a capture-region
+  // recording's cropped dimensions have no reason to land on an even
+  // number, and encoding straight to libx264 fails outright on real odd
+  // dimensions ("width not divisible by 2"). Rounds both down to the
+  // nearest even number, trimming at most 1px off either edge —
+  // imperceptible. Chained after setpts in one filter graph, since ffmpeg
+  // only takes a single -vf. Not needed for the VP9 branch.
+  const videoFilter = isMp4 ? `setpts=${gameSpeed}*PTS,scale=trunc(iw/2)*2:trunc(ih/2)*2` : `setpts=${gameSpeed}*PTS`
 
   try {
     await ffmpeg.writeFile(input, new Uint8Array(await blob.arrayBuffer()))
@@ -331,7 +339,7 @@ async function correctPlaybackSpeedImpl(blob: Blob, extension: string, gameSpeed
       '-i',
       input,
       '-vf',
-      `setpts=${gameSpeed}*PTS`,
+      videoFilter,
       '-af',
       `atempo=${(1 / gameSpeed).toFixed(4)}`,
       ...videoArgs,
@@ -378,6 +386,17 @@ async function convertToMp4Impl(blob: Blob, sourceExtension: string): Promise<Bl
     await execChecked(ffmpeg, [
       '-i',
       input,
+      // libx264 (unlike VP9, which the source may well have been recorded
+      // with — see the width/height comment above) requires even
+      // width/height, since yuv420p chroma planes are subsampled 2x2. A
+      // capture-region recording's cropped dimensions are whatever the
+      // scout happened to drag, with no reason to land on an even number —
+      // encoding straight to libx264 failed outright on real odd
+      // dimensions ("width not divisible by 2"). Rounds both down to the
+      // nearest even number, trimming at most 1px off either edge —
+      // imperceptible, and simpler/more reliable than padding.
+      '-vf',
+      'scale=trunc(iw/2)*2:trunc(ih/2)*2',
       '-c:v',
       'libx264',
       '-preset',
