@@ -513,6 +513,33 @@ warrant a clip, or context to go alongside one taken moments before/after.
   vault or otherwise). That's a deliberate next step, not an oversight — see
   the project roadmap if you want to track it.
 
+## Lineup (reference only)
+
+A **Lineup** toggle (popup and overlay both — this one's mirrored fully into
+the overlay, unlike Settings/Compile/clip-review, since the whole point is
+glancing at it mid-match without leaving the broadcast tab) holds a
+screenshot and/or free text for the current match's lineup, so you don't
+have to alt-tab to Flashscore/Wyscout/whatever mid-game to double-check who's
+starting.
+
+- **Screenshot** — click to upload a file, or paste (Ctrl+V) directly into
+  the text box below it; a pasted image is detected and diverted to become
+  the lineup image instead of literal text. Re-encoded and downscaled
+  client-side (`resizeImageDataUrl` in `src/lib/image.ts`, capped at 900px
+  on the long edge, JPEG) before it's ever sent to the background — a raw
+  screenshot could otherwise get uncomfortably close to
+  `chrome.storage.session`'s quota, and there's no reason to render a
+  multi-megapixel image in a 240–280px-wide panel anyway.
+- **Text** — a plain textarea, typed or pasted freely. Edited locally and
+  only sent to the background on blur (not per keystroke), same reasoning
+  as debouncing anywhere else in this app.
+- **Deliberately not parsed or linked** to the player roster — this is a
+  glance-at reference, not a data source. No formation diagram, no
+  per-player linking, no OCR. If that's ever wanted, it's a separate,
+  much bigger feature.
+- Scoped to the current match, same as clips/notes — reset on the next
+  `START_MATCH`.
+
 ## Clip list (current match only)
 
 The main screen lists every clip saved so far in the running match, grouped

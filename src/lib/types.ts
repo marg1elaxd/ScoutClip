@@ -63,6 +63,19 @@ export interface MatchNote {
   savedAt: number
 }
 
+/**
+ * Reference-only lineup info for the current match — paste a screenshot
+ * (from Flashscore, Wyscout, wherever) and/or type out the XI, so it's a
+ * click away in the panel instead of alt-tabbing mid-game. Deliberately not
+ * parsed or linked to the player roster — this is a glance-at reference,
+ * not a data source.
+ */
+export interface MatchLineup {
+  text: string
+  /** Downscaled/re-encoded client-side before storage (see resizeImageDataUrl in lib/image.ts) so a raw screenshot doesn't blow past chrome.storage.session's quota. */
+  imageDataUrl: string | null
+}
+
 export interface MatchState {
   matchInfo: string
   players: string[]
@@ -80,6 +93,8 @@ export interface MatchState {
   clips: SavedClip[]
   /** Scoped to the current match only, same as clips — reset on the next START_MATCH. */
   notes: MatchNote[]
+  /** Scoped to the current match only, same as clips/notes — reset on the next START_MATCH. */
+  lineup: MatchLineup
 }
 
 /** Common playback-speed increments a broadcast is likely to be watched at. */

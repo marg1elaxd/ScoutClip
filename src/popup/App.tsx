@@ -12,6 +12,7 @@ import {
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
 import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
 import { formatMmSs } from '../lib/time'
+import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
 
 /** Sentinel key for the general (not-tied-to-a-player) note field/target, alongside real player names in the same open-fields list. */
 const GENERAL_NOTE_KEY = '__general__'
@@ -123,6 +124,14 @@ export default function App() {
   const [openNoteTargets, setOpenNoteTargets] = useState<string[]>([])
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
   const [showNotes, setShowNotes] = useState(false)
+  // Lineup: reference-only screenshot + free text, purely a glance-at panel
+  // (no parsing/linking to the roster). Text is edited locally and only
+  // sent to the background on blur, so we're not firing a message per
+  // keystroke; lineupTextDirty tracks whether the local draft has diverged
+  // from state so a stale draft doesn't clobber a freshly loaded snapshot.
+  const [showLineup, setShowLineup] = useState(false)
+  const [lineupTextDraft, setLineupTextDraft] = useState<string | null>(null)
+  const [lineupImageBusy, setLineupImageBusy] = useState(false)
 
   useEffect(() => {
     sendMessage<StateSnapshot>({ type: 'GET_STATE' }).then(setState)
@@ -604,6 +613,31 @@ export default function App() {
     }
   }
 
+  async function handleLineupTextBlur() {
+    if (lineupTextDraft === null || lineupTextDraft === match.lineup.text) return
+    await call({ type: 'SET_LINEUP_TEXT', text: lineupTextDraft })
+    setLineupTextDraft(null)
+  }
+
+  async function handleLineupFile(file: File | null) {
+    if (!file || !file.type.startsWith('image/')) return
+    setLineupImageBusy(true)
+    setError(null)
+    try {
+      const raw = await readFileAsDataUrl(file)
+      const resized = await resizeImageDataUrl(raw)
+      await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: resized })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLineupImageBusy(false)
+    }
+  }
+
+  async function handleRemoveLineupImage() {
+    await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: null })
+  }
+
   const lastSavedName = lastSavedPath?.split('/').pop() ?? null
   const lastCompilationName = lastCompilationPath?.split('/').pop() ?? null
 
@@ -973,6 +1007,48 @@ export default function App() {
           <button className="full" onClick={handleCopyRawNotes}>
             Copy all raw notes
           </button>
+        </div>
+      )}
+
+      <button className="clip-toggle" onClick={() => setShowLineup((s) => !s)}>
+        Lineup {showLineup ? '▲' : '▼'}
+      </button>
+
+      {showLineup && (
+        <div className="clip-list">
+          {match.lineup.imageDataUrl ? (
+            <>
+              <img className="lineup-image" src={match.lineup.imageDataUrl} alt="Lineup screenshot" />
+              <button className="full" onClick={handleRemoveLineupImage}>
+                Remove image
+              </button>
+            </>
+          ) : (
+            <label className="lineup-dropzone">
+              {lineupImageBusy ? 'Processing…' : 'Click to upload a screenshot, or paste one into the text box below'}
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => handleLineupFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          )}
+          <textarea
+            className="lineup-textarea"
+            placeholder="Type or paste the lineup…"
+            value={lineupTextDraft ?? match.lineup.text}
+            onChange={(e) => setLineupTextDraft(e.target.value)}
+            onBlur={handleLineupTextBlur}
+            onPaste={(e) => {
+              const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith('image/'))
+              const file = item?.getAsFile()
+              if (file) {
+                e.preventDefault()
+                void handleLineupFile(file)
+              }
+            }}
+          />
         </div>
       )}
     </div>

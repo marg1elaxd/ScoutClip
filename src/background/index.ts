@@ -37,6 +37,7 @@ function defaultMatch(): MatchState {
     gameSpeed: 1,
     clips: [],
     notes: [],
+    lineup: { text: '', imageDataUrl: null },
   }
 }
 
@@ -654,6 +655,18 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         savedAt: Date.now(),
       }
       match = { ...match, notes: [...match.notes, note] }
+      persist()
+      return snapshot()
+    }
+
+    case 'SET_LINEUP_TEXT': {
+      match = { ...match, lineup: { ...match.lineup, text: message.text } }
+      persist()
+      return snapshot()
+    }
+
+    case 'SET_LINEUP_IMAGE': {
+      match = { ...match, lineup: { ...match.lineup, imageDataUrl: message.imageDataUrl } }
       persist()
       return snapshot()
     }

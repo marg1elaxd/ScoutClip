@@ -22,6 +22,7 @@ import { useEffect, useState } from 'react'
 import { sendMessage, type StateSnapshot } from '../lib/messages'
 import type { RecordingStatus } from '../lib/types'
 import { GENERAL_NOTE_LABEL } from '../lib/notes'
+import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
 
 const HOST_ID = 'scout-clip-recorder-overlay-host'
 const POLL_MS = 3000
@@ -120,6 +121,12 @@ const OVERLAY_CSS = `
   .status.inline { margin-top: 0; }
   .error { margin-top: 6px; font-size: 11px; color: #ff8a80; }
   .footer { margin-top: 8px; font-size: 10px; color: #6b7580; }
+  .lineup-toggle { width: 100%; margin-bottom: 8px; background: transparent; border-color: #2b333a; color: #9aa4ad; font-size: 11px; padding: 5px; }
+  .lineup-panel { margin-bottom: 8px; }
+  .lineup-dropzone { display: flex; align-items: center; justify-content: center; text-align: center; padding: 14px 8px; border: 1px dashed #2b333a; border-radius: 8px; font-size: 10px; color: #9aa4ad; cursor: pointer; }
+  .lineup-dropzone:hover { border-color: #3a444d; color: #e8ecef; }
+  .lineup-image { display: block; width: 100%; max-height: 200px; object-fit: contain; border-radius: 8px; background: #1a2027; }
+  .lineup-textarea { width: 100%; box-sizing: border-box; min-height: 70px; margin-top: 6px; padding: 7px; border-radius: 6px; border: 1px solid #2b333a; background: #1a2027; color: #e8ecef; font-size: 12px; font-family: inherit; resize: vertical; }
 `
 
 function OverlayApp({ onClose }: { onClose: () => void }) {
@@ -137,6 +144,9 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   // record something that just happened.
   const [openNoteTargets, setOpenNoteTargets] = useState<string[]>([])
   const [noteDrafts, setNoteDrafts] = useState<Record<string, string>>({})
+  const [showLineup, setShowLineup] = useState(false)
+  const [lineupTextDraft, setLineupTextDraft] = useState<string | null>(null)
+  const [lineupImageBusy, setLineupImageBusy] = useState(false)
 
   async function refresh() {
     try {
@@ -257,6 +267,31 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     }
   }
 
+  async function handleLineupTextBlur() {
+    if (lineupTextDraft === null || lineupTextDraft === match.lineup.text) return
+    await call({ type: 'SET_LINEUP_TEXT', text: lineupTextDraft })
+    setLineupTextDraft(null)
+  }
+
+  async function handleLineupFile(file: File | null) {
+    if (!file || !file.type.startsWith('image/')) return
+    setLineupImageBusy(true)
+    setError(null)
+    try {
+      const raw = await readFileAsDataUrl(file)
+      const resized = await resizeImageDataUrl(raw)
+      await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: resized })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setLineupImageBusy(false)
+    }
+  }
+
+  async function handleRemoveLineupImage() {
+    await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: null })
+  }
+
   async function handleDeletePlayer(player: string) {
     if (!window.confirm(`Remove ${player} from the roster? Their saved clips stay untouched.`)) return
     await call({ type: 'DELETE_PLAYER', playerName: player })
@@ -288,6 +323,48 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
           </button>
         </div>
       </div>
+
+      <button className="lineup-toggle" onClick={() => setShowLineup((s) => !s)}>
+        Lineup {showLineup ? '▲' : '▼'}
+      </button>
+
+      {showLineup && (
+        <div className="lineup-panel">
+          {match.lineup.imageDataUrl ? (
+            <>
+              <img className="lineup-image" src={match.lineup.imageDataUrl} alt="Lineup screenshot" />
+              <button className="full" onClick={handleRemoveLineupImage}>
+                Remove image
+              </button>
+            </>
+          ) : (
+            <label className="lineup-dropzone">
+              {lineupImageBusy ? 'Processing…' : 'Click to upload, or paste a screenshot below'}
+              <input
+                type="file"
+                accept="image/*"
+                style={{ display: 'none' }}
+                onChange={(e) => handleLineupFile(e.target.files?.[0] ?? null)}
+              />
+            </label>
+          )}
+          <textarea
+            className="lineup-textarea"
+            placeholder="Type or paste the lineup…"
+            value={lineupTextDraft ?? match.lineup.text}
+            onChange={(e) => setLineupTextDraft(e.target.value)}
+            onBlur={handleLineupTextBlur}
+            onPaste={(e) => {
+              const item = Array.from(e.clipboardData.items).find((i) => i.type.startsWith('image/'))
+              const file = item?.getAsFile()
+              if (file) {
+                e.preventDefault()
+                void handleLineupFile(file)
+              }
+            }}
+          />
+        </div>
+      )}
 
       {openNoteTargets.length > 0 && (
         <div className="note-fields">
@@ -501,6 +578,7 @@ function createOverlay() {
     'keydown',
     'keyup',
     'keypress',
+    'paste',
   ]) {
     host.addEventListener(type, stopLeaking)
   }
