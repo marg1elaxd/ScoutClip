@@ -402,12 +402,26 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
     if (needed.length > 0) {
       const joinedStartMs = needed[0].startedAt
       const offsetSeconds = Math.max(0, (desiredStartMs - joinedStartMs) / 1000)
+      // Consecutive standby segments can genuinely overlap in real content —
+      // rotateStandbySegment starts the next segment's recorder before the
+      // previous one's stop() resolves (to avoid a capture gap at the
+      // rotation seam), so both briefly recorded the same real seconds of
+      // footage. The same thing can happen between the *last* standby
+      // segment and this active clip's own recording, if a rotation landed
+      // while the clip was already recording — standby never pauses for an
+      // active session, so that segment kept going too. Trim each segment
+      // to stop exactly where the next one (or the active clip itself)
+      // actually began, using their own measured timestamps as ground
+      // truth, so the overlap never reaches the concat step at all instead
+      // of playing back as a literal repeat.
+      const trimmedSegments = needed.map((s, i) => {
+        const nextBoundaryMs = i + 1 < needed.length ? needed[i + 1].startedAt : session.requestedAt
+        const trimToSeconds = Math.max(0, (nextBoundaryMs - s.startedAt) / 1000)
+        return { blob: s.blob, extension: ext, trimToSeconds }
+      })
       try {
         console.log('[offscreen]', sessionId, 'pre-roll trim: segments=', needed.length, 'offsetSeconds=', offsetSeconds.toFixed(2))
-        pendingBlob = await concatAndTrimFront(
-          [...needed.map((s) => ({ blob: s.blob, extension: ext })), { blob: activeClipBlob, extension: ext }],
-          offsetSeconds,
-        )
+        pendingBlob = await concatAndTrimFront([...trimmedSegments, { blob: activeClipBlob, extension: ext }], offsetSeconds)
       } catch (err) {
         console.error('[offscreen] pre-roll trim failed — saving clip without pre-roll instead', err)
         pendingBlob = activeClipBlob

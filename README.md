@@ -465,6 +465,24 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
     5 seconds, not frame-exact). Standby buffering never stopped in the
     first place, so there's nothing to resume — it's already covering
     whoever gets clicked next.
+    - Rotation avoids a capture gap at its own seam by starting the
+      replacement recorder *before* the outgoing one finishes stopping (see
+      "Recording multiple players at once" above) — which means the two
+      recorders briefly capture the exact same real seconds of footage.
+      Naively concatenating full segments end-to-end would replay that
+      overlap as a literal repeat in the saved clip — reported as the clip
+      "sometimes re-running the same second again." The same thing can
+      happen between the *last* standby segment and the active clip's own
+      recording too, if a rotation happens to land while that clip is
+      already recording (standby never pauses for an active session, so
+      that segment keeps going regardless). Every segment now gets trimmed
+      to stop exactly where the next one — or the active clip itself —
+      actually began, using their own measured start timestamps, before any
+      of them are concatenated (`trimToSeconds` on `TrimSegment` in
+      [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts), computed in
+      `stopSession` in [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) —
+      so the overlap is cut out before it ever reaches the join, rather than
+      accepted as an unavoidable cost of closing the gap.
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).

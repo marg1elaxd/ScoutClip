@@ -45,6 +45,20 @@ export interface TrimSegment {
   blob: Blob
   /** Container extension shared by every segment — they always match here, all recorded from the same MediaRecorder profile. */
   extension: string
+  /**
+   * If set, only the first this-many seconds of the segment are kept before
+   * joining. Used to cut real content overlap out of consecutive standby
+   * segments — the standby ring buffer starts a segment's replacement
+   * recorder before the outgoing one finishes stopping (to avoid a capture
+   * gap at the seam), which means both briefly recorded the same real
+   * seconds of footage. Concatenating full segments as-is would replay that
+   * overlap as a literal repeat in the output; trimming the earlier
+   * segment's tail back to where the next one's recording actually began
+   * removes it before the segments are ever joined. Stream copy, so the cut
+   * lands on the nearest keyframe — not frame-exact, same tolerance as the
+   * front trim below.
+   */
+  trimToSeconds?: number | null
 }
 
 async function readOutputBlob(ffmpeg: FFmpeg, path: string, mimeType: string): Promise<Blob> {
@@ -56,21 +70,41 @@ async function readOutputBlob(ffmpeg: FFmpeg, path: string, mimeType: string): P
   return new Blob([bytes as BlobPart], { type: mimeType })
 }
 
-/** Writes `segments` into ffmpeg's virtual FS and losslessly joins them (concat demuxer, stream copy) into `joined.<ext>`. */
+/**
+ * Writes `segments` into ffmpeg's virtual FS and losslessly joins them
+ * (concat demuxer, stream copy) into `joined.<ext>`. Any segment with
+ * `trimToSeconds` set is cut down to that duration first, as its own
+ * intermediate file, before being added to the concat list — see
+ * TrimSegment's doc comment for why.
+ */
 async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<{ joined: string; ext: string; cleanup: string[] }> {
   const ext = segments[0].extension
-  const names = segments.map((_, i) => `seg${i}.${ext}`)
   const joined = `joined.${ext}`
+  const cleanup: string[] = []
+  const names: string[] = []
 
   for (let i = 0; i < segments.length; i++) {
-    await ffmpeg.writeFile(names[i], new Uint8Array(await segments[i].blob.arrayBuffer()))
+    const seg = segments[i]
+    const rawName = `raw${i}.${ext}`
+    await ffmpeg.writeFile(rawName, new Uint8Array(await seg.blob.arrayBuffer()))
+    cleanup.push(rawName)
+
+    if (seg.trimToSeconds != null) {
+      const trimmedName = `segtrim${i}.${ext}`
+      await ffmpeg.exec(['-i', rawName, '-t', seg.trimToSeconds.toFixed(2), '-c', 'copy', trimmedName])
+      cleanup.push(trimmedName)
+      names.push(trimmedName)
+    } else {
+      names.push(rawName)
+    }
   }
 
   const listContent = names.map((n) => `file '${n}'`).join('\n')
   await ffmpeg.writeFile('list.txt', listContent)
+  cleanup.push('list.txt')
   await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', joined])
 
-  return { joined, ext, cleanup: [...names, 'list.txt', joined] }
+  return { joined, ext, cleanup: [...cleanup, joined] }
 }
 
 /**
