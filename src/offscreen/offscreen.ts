@@ -337,9 +337,24 @@ function stopSegment(rec: MediaRecorder, chunksRef: Blob[], startedAt: number): 
  * removes the possibility entirely rather than hoping the timing works out;
  * it's rescheduled once the flush resolves, at most a few ms later than it
  * otherwise would have fired — not a correctness concern.
+ *
+ * Standby is one *shared* history buffer used by every player that needs
+ * pre-roll, not a per-player thing — so two players stopping around the
+ * same time can each independently call this. Without deduplication that's
+ * the exact same "two near-simultaneous operations on one recorder"
+ * problem all over again, just from concurrent players instead of a
+ * rotation collision: two requestData() calls landing on the same recorder
+ * in quick succession. Single-flighted here so concurrent callers all
+ * await the one in-flight flush instead of each triggering their own — the
+ * shared snapshot is valid for all of them regardless of whose stop
+ * triggered it, since each caller trims it against their own requestedAt
+ * afterward anyway.
  */
+let pendingStandbyFlush: Promise<StandbySegment | null> | null = null
+
 function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
-  return new Promise((resolve) => {
+  if (pendingStandbyFlush) return pendingStandbyFlush
+  pendingStandbyFlush = new Promise<StandbySegment | null>((resolve) => {
     if (!standbyArmed || !standbyRecorder || standbyRecorder.state === 'inactive') {
       resolve(null)
       return
@@ -365,7 +380,10 @@ function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
       { once: true },
     )
     rec.requestData()
+  }).finally(() => {
+    pendingStandbyFlush = null
   })
+  return pendingStandbyFlush
 }
 
 /**

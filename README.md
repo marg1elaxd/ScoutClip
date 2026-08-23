@@ -559,6 +559,18 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
         relying on the timing working out — it's rescheduled once the flush
         resolves, at most a few ms later than it otherwise would have
         fired.
+      - The same class of race resurfaced from a different direction:
+        standby is one *shared* history buffer used by every player that
+        needs pre-roll, not a per-player thing. Two players stopping around
+        the same time each independently called `flushCurrentStandbySegment`
+        on the *same* underlying recorder — two `requestData()` calls
+        landing on it in quick succession, the identical problem as the
+        rotation-timer case above, just triggered by concurrent players
+        instead of a rotation collision. Fixed by single-flighting the
+        flush: concurrent callers now await the one in-flight flush instead
+        of each triggering their own — the shared snapshot is valid for all
+        of them regardless of whose stop triggered it, since each caller
+        still trims it against their own `requestedAt` afterward.
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).
