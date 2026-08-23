@@ -326,6 +326,17 @@ function stopSegment(rec: MediaRecorder, chunksRef: Blob[], startedAt: number): 
  * `ondataavailable` property handler (set in startStandbySegment) already
  * pushes into that array; this just waits for that same event via a second
  * listener before reading it back.
+ *
+ * The rotation timer is deliberately paused for the duration of this flush.
+ * If it fired while a requestData() call was still in flight, rotation
+ * would call .stop() on the very same recorder moments later — two
+ * near-simultaneous operations on one MediaRecorder that browsers don't
+ * always handle as cleanly in practice as the spec implies, and which
+ * produced a genuinely malformed segment blob in testing (ffmpeg aborting
+ * with an internal "FS error" trying to process it). Pausing the timer
+ * removes the possibility entirely rather than hoping the timing works out;
+ * it's rescheduled once the flush resolves, at most a few ms later than it
+ * otherwise would have fired — not a correctness concern.
  */
 function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
   return new Promise((resolve) => {
@@ -336,9 +347,21 @@ function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
     const startedAt = standbySegmentStartedAt ?? Date.now()
     const rec = standbyRecorder
     const chunksRef = standbyChunks
+    if (standbyRotationTimer != null) {
+      clearTimeout(standbyRotationTimer)
+      standbyRotationTimer = null
+    }
     rec.addEventListener(
       'dataavailable',
-      () => resolve({ blob: new Blob(chunksRef, { type: streamMimeType }), startedAt, endedAt: Date.now() }),
+      () => {
+        resolve({ blob: new Blob(chunksRef, { type: streamMimeType }), startedAt, endedAt: Date.now() })
+        // Only reschedule if this is still the live segment — a genuine
+        // rotation can't have snuck in while paused, but disarm/a new match
+        // could have moved on in the meantime.
+        if (standbyArmed && standbyRecorder === rec && standbyRotationTimer == null) {
+          standbyRotationTimer = setTimeout(rotateStandbySegment, STANDBY_ROTATION_SECONDS * 1000)
+        }
+      },
       { once: true },
     )
     rec.requestData()

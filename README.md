@@ -546,6 +546,19 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       afterward, so its eventual real rotation is unaffected
       (`flushCurrentStandbySegment` in
       [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)).
+      - That flush introduced its own edge case: if the rotation timer fired
+        while a `requestData()` call was still in flight, rotation would
+        call `.stop()` on the very same recorder moments later — two
+        near-simultaneous operations on one `MediaRecorder` that don't
+        always behave as cleanly in practice as the spec implies. Observed
+        as ffmpeg aborting with an internal `FS error` on a single-player
+        recording (`[ffmpeg] Aborted()` followed by `[offscreen] pre-roll
+        trim failed ... ErrnoError: FS error`, the clip saving without
+        pre-roll via the same fallback as any splice failure). Fixed by
+        pausing the rotation timer for the duration of the flush instead of
+        relying on the timing working out — it's rescheduled once the flush
+        resolves, at most a few ms later than it otherwise would have
+        fired.
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).
