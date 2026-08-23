@@ -307,6 +307,45 @@ function stopSegment(rec: MediaRecorder, chunksRef: Blob[], startedAt: number): 
 }
 
 /**
+ * Snapshots whatever the *currently running* (not-yet-rotated) standby
+ * segment has recorded so far, without stopping or disrupting it — pre-roll
+ * splicing otherwise only has access to fully-rotated segments in
+ * standbySegments, and the segment actively recording right now covers the
+ * moments closest to "before the click," which are exactly what a short
+ * preRollSeconds window most needs. Whenever a click happens to fall close
+ * to a rotation boundary and the clip is stopped before that segment
+ * naturally rotates out, that slice of history was completely unavailable —
+ * not corrupted, just a genuine gap with nothing to splice in, reported as
+ * pre-roll sometimes missing entirely.
+ *
+ * `MediaRecorder.requestData()` flushes the buffered-so-far data as a
+ * `dataavailable` event (with data since the last flush, or since start if
+ * none yet) *without* stopping the recorder — it keeps running and
+ * accumulating into the same chunk array afterward exactly as if this were
+ * never called, so its eventual real rotation is unaffected. The existing
+ * `ondataavailable` property handler (set in startStandbySegment) already
+ * pushes into that array; this just waits for that same event via a second
+ * listener before reading it back.
+ */
+function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
+  return new Promise((resolve) => {
+    if (!standbyArmed || !standbyRecorder || standbyRecorder.state === 'inactive') {
+      resolve(null)
+      return
+    }
+    const startedAt = standbySegmentStartedAt ?? Date.now()
+    const rec = standbyRecorder
+    const chunksRef = standbyChunks
+    rec.addEventListener(
+      'dataavailable',
+      () => resolve({ blob: new Blob(chunksRef, { type: streamMimeType }), startedAt, endedAt: Date.now() }),
+      { once: true },
+    )
+    rec.requestData()
+  })
+}
+
+/**
  * MediaRecorder.stop() is async — the old recorder doesn't actually go
  * quiet until its `stop` event fires, one or more event-loop ticks later.
  * Waiting for that before starting the replacement left a real gap where
@@ -398,6 +437,13 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
   let pendingBlob: Blob
   if (session.preRollSeconds > 0) {
     const desiredStartMs = session.requestedAt - session.preRollSeconds * 1000
+    // The segment covering "right before the click" may not have rotated
+    // into standbySegments yet — force a snapshot of it now (see
+    // flushCurrentStandbySegment's doc comment) so it's available to splice
+    // even when the recording was too short for a natural rotation to have
+    // happened in the meantime.
+    const currentSegment = await flushCurrentStandbySegment()
+    const candidateSegments = currentSegment ? [...standbySegments, currentSegment] : standbySegments
     // Standby keeps rotating on its own fixed schedule regardless of when
     // Record gets clicked, so a rotation can land shortly *after* the click
     // too. A segment like that isn't pre-roll history at all (it started
@@ -405,7 +451,7 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
     // alone doesn't rule it out — also require it to have actually started
     // before the click, or it gets pulled in, trimmed to a ~0s sliver by
     // the boundary math below, and corrupts the join right at that seam.
-    const needed = standbySegments
+    const needed = candidateSegments
       .filter((s) => s.endedAt > desiredStartMs && s.startedAt < session.requestedAt)
       .sort((a, b) => a.startedAt - b.startedAt)
     if (needed.length > 0) {

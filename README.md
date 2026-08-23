@@ -517,6 +517,21 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)), which tells the
       demuxer to regenerate presentation timestamps from frame duration
       instead of trusting each input file's own mismatched clock.
+    - A fourth issue, structural rather than a bug in any single
+      calculation: pre-roll splicing could only draw on segments that had
+      already fully rotated into `standbySegments` — the segment actively
+      recording *right now* was invisible to it. Whenever a click happened
+      to land close to a rotation boundary and the clip was stopped before
+      that segment's *next* natural rotation, the slice of history covering
+      "just before the click" was never captured anywhere — not corrupted,
+      genuinely unavailable — reported as pre-roll sometimes missing
+      entirely. Fixed by forcing a snapshot of the current segment's
+      buffered-so-far data at Stop time via
+      `MediaRecorder.requestData()`, which flushes without stopping or
+      disrupting it — the recorder keeps running and accumulating normally
+      afterward, so its eventual real rotation is unaffected
+      (`flushCurrentStandbySegment` in
+      [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)).
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).
