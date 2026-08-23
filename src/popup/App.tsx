@@ -11,6 +11,7 @@ import {
 } from '../lib/types'
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
 import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
+import { formatMmSs } from '../lib/time'
 
 /** Sentinel key for the general (not-tied-to-a-player) note field/target, alongside real player names in the same open-fields list. */
 const GENERAL_NOTE_KEY = '__general__'
@@ -36,12 +37,7 @@ function getStreamIdForActiveTab(): Promise<string> {
 function formatClock(elapsedMs: number, runningSinceMs: number | null, tick: number): string {
   void tick // force re-render dependency
   const extra = runningSinceMs != null ? Date.now() - runningSinceMs : 0
-  const totalSec = Math.floor((elapsedMs + extra) / 1000)
-  const mm = Math.floor(totalSec / 60)
-    .toString()
-    .padStart(2, '0')
-  const ss = (totalSec % 60).toString().padStart(2, '0')
-  return `${mm}:${ss}`
+  return formatMmSs(elapsedMs + extra)
 }
 
 function CategoryEditor({
@@ -903,7 +899,7 @@ export default function App() {
                   )}
                 </div>
                 {playerClips
-                  .sort((a, b) => a.minute - b.minute)
+                  .sort((a, b) => a.timestampMs - b.timestampMs)
                   .map((clip, i) => (
                     <div key={i} className="clip-row">
                       <label className="clip-select">
@@ -913,12 +909,12 @@ export default function App() {
                           onChange={() => toggleClipSelected(clip.clipId)}
                         />
                         <span>
-                          #{clip.clipNumber} · {clip.actionType ?? 'Untagged'} · {clip.minute}′
+                          #{clip.clipNumber} · {clip.actionType ?? 'Untagged'} · {formatMmSs(clip.timestampMs)}
                         </span>
                       </label>
                       <div className="row" style={{ gap: 4 }}>
                         <button onClick={() => chrome.downloads.show(clip.downloadId)}>Show</button>
-                        <button onClick={() => handleDeleteClip(clip.clipId, `${clip.actionType ?? 'Untagged'} · ${clip.minute}′`)}>
+                        <button onClick={() => handleDeleteClip(clip.clipId, `${clip.actionType ?? 'Untagged'} · ${formatMmSs(clip.timestampMs)}`)}>
                           Delete
                         </button>
                       </div>
@@ -967,7 +963,7 @@ export default function App() {
                   <div key={note.id} className="clip-row">
                     <span>
                       {note.text}
-                      {settings.includeMinuteInNotes ? ` (${note.minute}′)` : ''}
+                      {settings.includeMinuteInNotes ? ` (${formatMmSs(note.timestampMs)})` : ''}
                     </span>
                   </div>
                 ))}

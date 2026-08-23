@@ -495,11 +495,13 @@ warrant a clip, or context to go alongside one taken moments before/after.
   polished document on its own. Each group header (including General) also
   has its own small copy (⧉) button, for grabbing just that one player's —
   or just General's — notes without the rest of the match along with it.
-- **Match minute display** — off by default; a Settings checkbox
-  ("Show the match minute alongside each note") appends `(N′)` to each note
-  both in the review list and in the copied raw text. The minute is always
-  recorded regardless of this setting — it only controls whether it's
-  *shown* — so toggling it mid-match doesn't lose or gain data either way.
+- **Match time display** — off by default; a Settings checkbox
+  ("Show the match minute alongside each note") appends the match time as
+  `(mm:ss)` to each note both in the review list and in the copied raw text.
+  The timestamp is always recorded regardless of this setting — it only
+  controls whether it's *shown* — so toggling it mid-match doesn't lose or
+  gain data either way. Clip rows in the Clips section show the same mm:ss
+  format.
 - **Overlay** — the in-page overlay (for taking notes without switching to
   the popup while watching the broadcast) has the same note-taking controls
   (icon, General button, stacked fields) but not the review/Copy section,

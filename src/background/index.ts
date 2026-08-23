@@ -123,9 +123,13 @@ function anyPlayerBusy(): boolean {
   return Object.values(playerRecordingStatus).some((s) => s === 'recording' || s === 'stopping' || s === 'saving')
 }
 
-function currentMinute(): number {
+function currentElapsedMs(): number {
   const runningExtra = match.runningSinceMs != null ? Date.now() - match.runningSinceMs : 0
-  return Math.floor((match.elapsedMs + runningExtra) / 60000)
+  return match.elapsedMs + runningExtra
+}
+
+function currentMinute(): number {
+  return Math.floor(currentElapsedMs() / 60000)
 }
 
 function snapshot(): StateSnapshot {
@@ -219,6 +223,7 @@ async function finalizePendingClip(clip: PendingClip, actionType: string | null)
           actionType,
           matchInfo: clip.matchInfo,
           minute: clip.minute,
+          timestampMs: clip.timestampMs,
           clipNumber,
           filename,
           path,
@@ -464,7 +469,12 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         delete pendingClips[playerName]
       }
 
-      pendingClips[playerName] = { playerName, matchInfo: match.matchInfo, minute: currentMinute() }
+      pendingClips[playerName] = {
+        playerName,
+        matchInfo: match.matchInfo,
+        minute: currentMinute(),
+        timestampMs: currentElapsedMs(),
+      }
       await ensureOffscreenDocument()
       playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'recording' }
       persist()
@@ -640,7 +650,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         id: crypto.randomUUID(),
         playerName: message.playerName,
         text,
-        minute: currentMinute(),
+        timestampMs: currentElapsedMs(),
         savedAt: Date.now(),
       }
       match = { ...match, notes: [...match.notes, note] }

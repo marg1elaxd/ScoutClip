@@ -1,4 +1,5 @@
 import type { MatchNote } from './types'
+import { formatMmSs } from './time'
 
 export const GENERAL_NOTE_LABEL = 'General'
 
@@ -10,13 +11,13 @@ export const GENERAL_NOTE_LABEL = 'General'
  * straight into a raw-notes tool (Obsidian) or an LLM prompt for further
  * processing, not read as a polished document on its own.
  *
- * `includeMinute`: whether to append each note's match minute — off by
- * default (RecordingSettings.includeMinuteInNotes), since minute is always
- * recorded regardless (see MatchNote) and this is purely a formatting
+ * `includeMinute`: whether to append each note's match time (mm:ss) — off by
+ * default (RecordingSettings.includeMinuteInNotes), since the timestamp is
+ * always recorded regardless (see MatchNote) and this is purely a formatting
  * choice at the point of reading the notes back, not a recording-time one.
  */
 export function formatRawNotes(notes: MatchNote[], playerOrder: string[], includeMinute: boolean): string {
-  const formatNote = (n: MatchNote) => (includeMinute ? `${n.text} (${n.minute}′)` : n.text)
+  const formatNote = (n: MatchNote) => (includeMinute ? `${n.text} (${formatMmSs(n.timestampMs)})` : n.text)
 
   const lines: string[] = []
   const general = notes.filter((n) => n.playerName === null)

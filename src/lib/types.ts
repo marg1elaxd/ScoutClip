@@ -32,6 +32,8 @@ export interface SavedClip {
   actionType: string | null
   matchInfo: string
   minute: number
+  /** Elapsed match time in ms at record time, kept alongside `minute` for mm:ss display precision (`minute` alone is whole-minute only, needed as-is for the filename). */
+  timestampMs: number
   /** This player's Nth clip in the match (1-based) — also baked into the filename so same-minute clips don't collide. */
   clipNumber: number
   filename: string
@@ -47,17 +49,17 @@ export interface SavedClip {
  * A quick text note taken live, independent of clips entirely — for
  * observations that don't warrant (or come before/after) an actual
  * recording. `playerName: null` means a general match note, not tied to
- * anyone specific. `minute` is always recorded (cheap to store); whether
- * it's actually *shown* anywhere is a display preference
- * (`RecordingSettings.includeMinuteInNotes`), not a recording-time choice —
- * so toggling that setting mid-match doesn't retroactively lose data either
- * way.
+ * anyone specific. `timestampMs` (elapsed match time in ms) is always
+ * recorded (cheap to store); whether it's actually *shown* anywhere is a
+ * display preference (`RecordingSettings.includeMinuteInNotes`), not a
+ * recording-time choice — so toggling that setting mid-match doesn't
+ * retroactively lose data either way.
  */
 export interface MatchNote {
   id: string
   playerName: string | null
   text: string
-  minute: number
+  timestampMs: number
   savedAt: number
 }
 
@@ -95,6 +97,7 @@ export interface PendingClip {
   playerName: string
   matchInfo: string
   minute: number
+  timestampMs: number
 }
 
 export type ActionCategoryName = 'Offensive' | 'Defensive'
