@@ -10,10 +10,10 @@ export type Message =
   // content script on every page) decides whether to render itself on any
   // given tab. See OVERLAY_SHOULD_SHOW below.
   | { type: 'START_MATCH'; matchInfo: string; players: string[]; tabId?: number; gameSpeed: number }
-  // Adds a player mid-match. The UI immediately follows this with
-  // START_RECORDING for the same name — the point is always "clip this
-  // person right now", so a separate select-then-record step would just be
-  // friction.
+  // Adds a player mid-match — just appends them to the roster (their chip
+  // shows up, same as anyone from the original roster). Doesn't start
+  // recording them; an earlier version did that automatically, but not
+  // every mid-match add means "clip them right now."
   | { type: 'ADD_PLAYER'; playerName: string }
   | { type: 'TOGGLE_CLOCK' }
   | { type: 'SET_CAPTURE_REGION'; region: CaptureRegion | null }

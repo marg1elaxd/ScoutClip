@@ -284,10 +284,14 @@ another that's still recording.
 
 The roster entered at Start Match isn't fixed — a **+** chip at the end of
 the player row (popup and overlay both) opens a small inline name field.
-Confirming it (`ADD_PLAYER`) appends the player to `match.players` and
-immediately starts recording them (same as clicking their chip would), since
-the reason to add someone mid-match is always "clip this person right now" —
-a separate add-then-click step would just be friction for no reason.
+Confirming it (`ADD_PLAYER`) appends the player to `match.players` and shows
+their chip, same as anyone from the original roster — it does *not* start
+recording them. An earlier version auto-started their recording immediately
+on the assumption that adding someone mid-match always means "clip them
+right now," but that assumption didn't hold — scouts also add a player
+they've just noticed and want available on the roster, without necessarily
+wanting a clip started that exact instant. Click their chip when actually
+ready, same as every other player.
 
 ## Game speed correction
 

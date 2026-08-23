@@ -212,14 +212,6 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     await call({ type: 'ADD_PLAYER', playerName: name })
     setNewPlayerName('')
     setShowAddPlayer(false)
-    // The point of adding someone mid-match is always "clip them right
-    // now" — immediately start their recording rather than requiring a
-    // separate chip click after.
-    try {
-      await call({ type: 'START_RECORDING', playerName: name })
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
   }
 
   const recordingPlayers = match.players.filter((p) => statusFor(p) === 'recording')

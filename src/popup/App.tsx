@@ -491,19 +491,6 @@ export default function App() {
     await call({ type: 'ADD_PLAYER', playerName: name })
     setNewPlayerName('')
     setShowAddPlayer(false)
-    // The point of adding someone mid-match is always "clip them right
-    // now" — immediately start their recording rather than requiring a
-    // separate chip click after.
-    try {
-      if (settings.preRollEnabled) {
-        await call({ type: 'START_RECORDING', playerName: name })
-      } else {
-        const streamId = await getStreamIdForActiveTab()
-        await call({ type: 'START_RECORDING', playerName: name, streamId })
-      }
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
-    }
   }
 
   function toggleClipSelected(clipId: string) {
