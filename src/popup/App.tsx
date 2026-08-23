@@ -718,7 +718,6 @@ export default function App() {
                       className="danger"
                       style={{ flex: 1 }}
                       onClick={() => {
-                        if (!window.confirm(`Discard ${p}'s clip? It won't be saved.`)) return
                         call({ type: 'DISCARD_CLIP', playerName: p })
                         setTagCategoryByPlayer((prev) => {
                           const { [p]: _drop, ...rest } = prev
