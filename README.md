@@ -262,6 +262,23 @@ another that's still recording.
   failure). Every ffmpeg-touching export now runs through a simple
   promise-chained queue so only one job ever touches the shared instance at
   a time, regardless of how many callers ask for one concurrently.
+- **Recovering from a fatal wasm crash**: `RuntimeError: memory access out
+  of bounds` (or any other `RuntimeError` from the wasm runtime itself, as
+  opposed to an ordinary ffmpeg processing error) is a fatal trap — the
+  module's internal state is corrupted from that point on, and every
+  subsequent command against the *same* instance keeps failing identically.
+  Seen after a long match with many clips already processed, consistent
+  with memory pressure accumulating across many operations on one
+  long-lived instance rather than anything specific to whatever clip
+  finally tipped it over — reported as every player's pre-roll breaking
+  identically from one point in the match onward, with `[ffmpeg] failed to
+  trim segment` / `RuntimeError: memory access out of bounds` in the
+  console for every clip after that. The queue in
+  [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts) now detects this
+  specific failure shape (`isFatalWasmError`) and discards the corrupted
+  instance (`ff.terminate()`, then dropping the reference) so the *next*
+  queued job builds a fresh one instead of continuing to hit the same
+  broken instance for the rest of the match.
 
 ## Adding a player mid-match
 

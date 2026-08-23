@@ -26,19 +26,37 @@ import { FFmpeg } from '@ffmpeg/ffmpeg'
  */
 let ffmpegPromise: Promise<FFmpeg> | null = null
 
+function loadFFmpeg(): Promise<FFmpeg> {
+  return (async () => {
+    const ff = new FFmpeg()
+    ff.on('log', ({ message }) => console.log('[ffmpeg]', message))
+    await ff.load({
+      coreURL: chrome.runtime.getURL('ffmpeg/ffmpeg-core.js'),
+      wasmURL: chrome.runtime.getURL('ffmpeg/ffmpeg-core.wasm'),
+    })
+    return ff
+  })()
+}
+
 function getFFmpeg(): Promise<FFmpeg> {
-  if (!ffmpegPromise) {
-    ffmpegPromise = (async () => {
-      const ff = new FFmpeg()
-      ff.on('log', ({ message }) => console.log('[ffmpeg]', message))
-      await ff.load({
-        coreURL: chrome.runtime.getURL('ffmpeg/ffmpeg-core.js'),
-        wasmURL: chrome.runtime.getURL('ffmpeg/ffmpeg-core.wasm'),
-      })
-      return ff
-    })()
-  }
+  if (!ffmpegPromise) ffmpegPromise = loadFFmpeg()
   return ffmpegPromise
+}
+
+/**
+ * A `RuntimeError: memory access out of bounds` (or any other `RuntimeError`
+ * from the wasm runtime itself, as opposed to an ordinary ffmpeg processing
+ * error like "Invalid data found when processing input") is a fatal trap —
+ * the wasm module's internal state is corrupted from that point on, and
+ * every subsequent command against the *same* instance keeps failing
+ * identically. Seen after a long match with many clips already processed,
+ * consistent with memory pressure accumulating across many operations on
+ * one long-lived instance rather than anything about the specific
+ * operation that finally tipped it over.
+ */
+function isFatalWasmError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err)
+  return message.includes('RuntimeError') || message.includes('memory access out of bounds')
 }
 
 /**
@@ -55,6 +73,12 @@ function getFFmpeg(): Promise<FFmpeg> {
  * JS side. Every exported function below is queued through this so ffmpeg
  * only ever does one job at a time, regardless of how many callers ask for
  * one concurrently.
+ *
+ * Also where a fatal wasm crash gets recovered from: if a queued job's
+ * error looks like isFatalWasmError, the corrupted instance is discarded
+ * (terminated and dropped) so the *next* queued job builds a fresh one
+ * instead of continuing to hit the same broken instance for the rest of
+ * the match — without this, one crash meant every clip failed from then on.
  */
 let ffmpegQueue: Promise<unknown> = Promise.resolve()
 
@@ -65,7 +89,14 @@ function queued<T>(task: () => Promise<T>): Promise<T> {
   // call's own promise) should reject for its caller.
   ffmpegQueue = result.then(
     () => undefined,
-    () => undefined,
+    (err) => {
+      if (isFatalWasmError(err)) {
+        console.error('[ffmpeg] fatal wasm crash — discarding the shared instance so the next operation starts fresh', err)
+        const broken = ffmpegPromise
+        ffmpegPromise = null
+        broken?.then((ff) => ff.terminate()).catch(() => {})
+      }
+    },
   )
   return result
 }
