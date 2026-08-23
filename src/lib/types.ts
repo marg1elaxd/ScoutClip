@@ -109,19 +109,36 @@ export const MAX_ROLL_SECONDS = 30
 
 /**
  * Bitrate is fixed for the whole match so clips concatenate losslessly later.
- * mimeType is deliberately NOT fixed here — MP4 (H.264/AAC) MediaRecorder
- * support is inconsistent across Chrome/OS combos, so the offscreen document
- * picks the best type it actually supports at record time via
- * MediaRecorder.isTypeSupported() and reports back what it used.
+ * mimeType is deliberately NOT fixed here — support for any given container
+ * varies across Chrome/OS combos, so the offscreen document picks the best
+ * type it actually supports at record time via
+ * MediaRecorder.isTypeSupported() (see CANDIDATE_MIME_TYPES below) and
+ * reports back what it used.
  */
 export const RECORDING_PROFILE = {
   videoBitsPerSecond: 5_000_000,
 } as const
 
-/** Preference order: real MP4 if this Chrome/OS combo supports it, else WebM. */
+/**
+ * Preference order: WebM first, MP4 as a fallback if this Chrome/OS combo
+ * doesn't support WebM recording at all (rare).
+ *
+ * Was MP4-first originally, on the reasoning that it's the more universally
+ * playable format. Flipped after MP4's rigid container structure turned out
+ * to be the direct cause of several real bugs specific to this app's
+ * architecture (heavy segmented recording + lossless stream-copy
+ * concatenation, over and over, for every pre-roll splice and every
+ * compilation): Chrome's MP4 MediaRecorder only writes the trailing "moov"
+ * atom (the container's sample/track index) once a recording is genuinely
+ * finalized via `.stop()`, and MP4 muxing was also the one that surfaced
+ * "Non-monotonous DTS" warnings when concatenating audio across segment
+ * boundaries. WebM/Matroska has neither problem — it's designed to be
+ * parseable as a stream from the start, with no trailing index requirement,
+ * which is exactly the shape of file this app produces constantly.
+ */
 export const CANDIDATE_MIME_TYPES = [
-  'video/mp4;codecs=avc1,mp4a',
-  'video/mp4',
   'video/webm;codecs=vp9,opus',
   'video/webm',
+  'video/mp4;codecs=avc1,mp4a',
+  'video/mp4',
 ]

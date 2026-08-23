@@ -706,9 +706,22 @@ revisiting in a later phase if `Downloads/ScoutClips/...` isn't good enough.
    bitrate** (5 Mbps) locked for the whole match — this is what will make
    lossless stream-copy compilation possible in Phase 4. The container/codec
    is picked at record time via `MediaRecorder.isTypeSupported()`, preferring
-   real MP4 (H.264/AAC) and falling back to WebM (VP9/Opus) if the browser/OS
-   combo doesn't support MP4 recording — the saved file's extension always
-   matches whatever was actually used.
+   **WebM (VP9/Opus)** and falling back to MP4 (H.264/AAC) if the browser/OS
+   combo doesn't support WebM recording (rare) — the saved file's extension
+   always matches whatever was actually used.
+   - Was MP4-first originally, on the assumption that it's the more
+     universally playable format — flipped after MP4's rigid container
+     structure turned out to directly cause several real bugs specific to
+     this app's architecture (heavy segmented recording + lossless
+     stream-copy concatenation, repeatedly, for every pre-roll splice and
+     every compilation): Chrome's MP4 `MediaRecorder` only writes the
+     trailing "moov" atom (the sample/track index) once a recording is
+     genuinely finalized via `.stop()`, and MP4 muxing was also the one
+     that surfaced `Non-monotonous DTS` warnings concatenating audio across
+     segment boundaries. WebM/Matroska has neither problem — designed to be
+     parseable as a stream from the start, no trailing index requirement,
+     exactly the shape of file this app produces constantly. See
+     `CANDIDATE_MIME_TYPES` in [src/lib/types.ts](src/lib/types.ts).
 4. `tabCapture` mutes the source tab's audio by default; the offscreen
    document plays the captured audio back out through a hidden `<audio>`
    element so the scout doesn't lose the commentary/crowd while recording.
