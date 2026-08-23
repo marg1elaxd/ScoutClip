@@ -587,20 +587,26 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
         still trims it against their own `requestedAt` afterward.
       - Even after both of those races were closed, the same `FS error`
         recurred a third time with no apparent timing collision — fresh
-        arm, single segment, trim math checking out exactly. Root cause not
-        fully pinned down; trimming a `requestData()`-flushed blob via
-        stream copy appears to be inherently less reliable in ffmpeg than
-        trimming a naturally-completed (`.stop()`-produced) one, not solely
-        a timing issue. Rather than chase further theories blind,
-        `writeAndConcat` in [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)
-        now degrades gracefully instead: if trimming one segment fails,
-        that segment is dropped from the join and the rest proceed, so a
-        failure costs at most one slice of pre-roll rather than all of it.
-        Known limitation: if segment 0 specifically is the one dropped, the
-        front-trim offset (computed relative to it) no longer lines up with
-        the resulting file's timeline — not corrected for, since in
-        practice the failure has only ever hit the most recent
-        (`requestData()`-flushed) segment, which is always last, not first.
+        arm, single segment, trim math checking out exactly. Made the
+        per-segment trim fail gracefully (drop that segment, keep going
+        with the rest) as a stopgap, but the real gap turned out to be one
+        level up: `FFmpeg.exec()` resolves with the underlying process's
+        **return code** — it does not reject just because ffmpeg crashed or
+        aborted internally. Every `ffmpeg.exec()` call in
+        [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts) was awaited with
+        its result completely ignored, so a command that aborted mid-way
+        (a segment trim, or the concat step itself) was silently treated as
+        a success — code proceeded to reference output that was never
+        actually written, and the *real* failure only surfaced several
+        steps later as a confusing `joined.mp4: No such file or directory`
+        from an unrelated downstream read, well after the command that
+        actually failed. That also meant the graceful per-segment
+        degradation above likely never triggered in practice — there was
+        rarely an exception for it to catch. Every `ffmpeg.exec()` call now
+        goes through `execChecked`, which throws immediately on a non-zero
+        return code with the failing command included — turning a silent,
+        delayed, misattributed failure into an immediate, attributable one,
+        right where it actually happened.
   - If every segment fails, or the splice throws for some other reason, the
     clip still saves — just without pre-roll, falling back to the plain
     recorded clip rather than losing it (logged as `[offscreen] pre-roll

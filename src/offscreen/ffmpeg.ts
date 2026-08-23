@@ -90,6 +90,27 @@ export interface TrimSegment {
   trimToSeconds?: number | null
 }
 
+/**
+ * `FFmpeg.exec()` resolves with the underlying process's *return code* —
+ * it does NOT reject just because ffmpeg itself crashed or aborted
+ * internally ("Aborted()" in its log output). Every direct `ffmpeg.exec()`
+ * call in this file was `await`ed and its result ignored, which meant a
+ * failed command (e.g. a segment trim that aborted mid-way) was silently
+ * treated as a success — code proceeded to reference output that was never
+ * actually written, and the *real* failure only surfaced several steps
+ * later as a confusing "No such file or directory" from some unrelated
+ * downstream read. This wraps every exec call so a non-zero return code
+ * throws immediately, at the point that actually failed, with the command
+ * that failed in the error — turning a silent, delayed, misleading failure
+ * into an immediate, attributable one.
+ */
+async function execChecked(ffmpeg: FFmpeg, args: string[]): Promise<void> {
+  const code = await ffmpeg.exec(args)
+  if (code !== 0) {
+    throw new Error(`ffmpeg exited with code ${code}: ${args.join(' ')}`)
+  }
+}
+
 async function readOutputBlob(ffmpeg: FFmpeg, path: string, mimeType: string): Promise<Blob> {
   const data = await ffmpeg.readFile(path)
   const bytes = data instanceof Uint8Array ? data : new TextEncoder().encode(data as string)
@@ -133,7 +154,7 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
     if (seg.trimToSeconds != null) {
       const trimmedName = `segtrim${i}.${ext}`
       try {
-        await ffmpeg.exec(['-i', rawName, '-t', seg.trimToSeconds.toFixed(2), '-c', 'copy', trimmedName])
+        await execChecked(ffmpeg, ['-i', rawName, '-t', seg.trimToSeconds.toFixed(2), '-c', 'copy', trimmedName])
         cleanup.push(trimmedName)
         names.push(trimmedName)
       } catch (err) {
@@ -181,7 +202,7 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
   // specific thing that breaks DTS monotonicity at a concat seam) without
   // touching their relative ordering, so it doesn't risk reshuffling
   // content the way wholesale regeneration did.
-  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', '-avoid_negative_ts', 'make_zero', joined])
+  await execChecked(ffmpeg, ['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', '-avoid_negative_ts', 'make_zero', joined])
 
   return { joined, ext, cleanup: [...cleanup, joined] }
 }
@@ -208,7 +229,7 @@ async function concatAndTrimFrontImpl(segments: TrimSegment[], offsetSeconds: nu
       offsetSeconds > 0
         ? ['-ss', offsetSeconds.toFixed(2), '-i', joined, '-c', 'copy', '-avoid_negative_ts', 'make_zero', trimmed]
         : ['-i', joined, '-c', 'copy', trimmed]
-    await ffmpeg.exec(trimArgs)
+    await execChecked(ffmpeg, trimArgs)
     return await readOutputBlob(ffmpeg, trimmed, segments[segments.length - 1].blob.type || `video/${ext}`)
   } finally {
     for (const n of [...cleanup, trimmed]) {
@@ -274,7 +295,7 @@ async function correctPlaybackSpeedImpl(blob: Blob, extension: string, gameSpeed
 
   try {
     await ffmpeg.writeFile(input, new Uint8Array(await blob.arrayBuffer()))
-    await ffmpeg.exec([
+    await execChecked(ffmpeg, [
       '-i',
       input,
       '-vf',
