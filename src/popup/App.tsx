@@ -111,7 +111,6 @@ export default function App() {
   const [gameSpeedInput, setGameSpeedInput] = useState(1)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [compiling, setCompiling] = useState(false)
-  const [exportAsMp4, setExportAsMp4] = useState(false)
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
   const [retargeting, setRetargeting] = useState(false)
@@ -518,7 +517,7 @@ export default function App() {
     setError(null)
     setCompiling(true)
     try {
-      await call({ type: 'COMPILE_CLIPS', clipIds: Array.from(selectedClipIds), exportAsMp4 })
+      await call({ type: 'COMPILE_CLIPS', clipIds: Array.from(selectedClipIds) })
       setSelectedClipIds(new Set())
     } finally {
       setCompiling(false)
@@ -825,10 +824,13 @@ export default function App() {
             })
           }
 
-          <label className="checkbox-row">
-            <input type="checkbox" checked={exportAsMp4} onChange={(e) => setExportAsMp4(e.target.checked)} />
-            Export as MP4 (re-encodes — slower, but plays everywhere)
-          </label>
+          <div className="status-line" style={{ marginTop: 4 }}>
+            Compiles export as WebM. To convert to MP4, use a free tool like{' '}
+            <a href="https://www.openshot.org/" target="_blank" rel="noreferrer">
+              OpenShot
+            </a>
+            .
+          </div>
           <button
             className="primary full"
             disabled={selectedClipIds.size === 0 || compiling}

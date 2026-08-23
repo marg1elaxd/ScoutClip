@@ -352,32 +352,10 @@ quality exactly matches the source clips).
   clips.<ext>` under `.../<Player>/Compilations/` for a single-player
   selection, or `Compilation - ...` under `.../Compilations/` (game-level,
   no player subfolder) for a mixed one.
-- **Export as MP4** (checkbox next to Compile): recording itself stays WebM
-  by default (see "How recording works" below for why), but a scout who
-  wants an MP4 to hand off elsewhere doesn't have to live with that —
-  checking this re-encodes the finished compilation to H.264/AAC MP4 as a
-  final step (`convertToMp4` in
-  [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)). Unlike the rest of
-  this app's ffmpeg work, this genuinely can't be a lossless stream copy —
-  WebM's codecs (VP9/Opus) aren't broadly playable inside an MP4
-  container — so it's a real decode + re-encode pass, slower than a normal
-  compile, reusing the same wasm-appropriate encoder settings as game speed
-  correction. Safe despite MP4's earlier problems: those were specifically
-  about a file peeked at *before* `MediaRecorder` finalizes it, and about
-  concatenating multiple independent recorder segments — this runs once, on
-  one single already-finished, already-concatenated file, the same shape of
-  operation as game speed correction, which has been reliable throughout.
-  - Did hit one real, separate issue: `libx264` requires **even**
-    width/height (chroma planes are subsampled 2x2 in yuv420p) — VP9 has
-    no such restriction, so a capture-region recording's cropped
-    dimensions (whatever the scout happened to drag, with no reason to
-    land on an even number) worked fine in WebM but failed outright
-    encoding to MP4 (`[libx264] width not divisible by 2` /
-    `Error initializing output stream`). Both `convertToMp4` and game
-    speed correction's MP4 branch now scale down to the nearest even
-    number first (`scale=trunc(iw/2)*2:trunc(ih/2)*2`, chained into the
-    existing filter graph) — trims at most 1px off either edge, not
-    noticeable.
+- Output is always **WebM** (matching the recording format — see "How
+  recording works" below for why that's the default). To convert to MP4,
+  use a free external tool like [OpenShot](https://www.openshot.org/) — a
+  note to that effect sits right under the clip list in the popup.
 - **The real gap this had to close first**: `chrome.downloads` writes clips
   to disk but has no way to read a saved file's bytes back — so compiling
   needs the actual video data from somewhere. The offscreen document now
@@ -395,6 +373,36 @@ quality exactly matches the source clips).
 - Compiling is therefore only possible **before** New Session is clicked for
   that match, same scoping as the clip list itself (Phase 2's "current match
   only" decision) — this is a natural fit, not an extra restriction.
+
+## On hold: exporting compilations as MP4
+
+Briefly had a checkbox next to Compile that re-encoded the finished
+compilation to H.264/AAC MP4 (`convertToMp4` in
+[src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)) for scouts who wanted an
+MP4 to hand off elsewhere, since WebM's codecs (VP9/Opus) aren't broadly
+playable inside an MP4 container and this couldn't be a lossless stream
+copy the way everything else in this app's ffmpeg pipeline is. Got it
+working correctly — it also surfaced a real bug (`libx264` requires *even*
+width/height, since yuv420p chroma planes are subsampled 2x2; a
+capture-region recording's cropped dimensions have no reason to land on an
+even number, and encoding straight to libx264 failed outright on real odd
+dimensions like 1365×757 — fixed with a `scale=trunc(iw/2)*2:trunc(ih/2)*2`
+filter, which also applies to game speed correction's own MP4 branch) —
+but the re-encode itself turned out to be impractically slow: `ultrafast`
+is already x264's fastest preset, and `ffmpeg.wasm` runs fully in software
+with no hardware acceleration, so a several-minute compilation could take
+tens of minutes. Removed rather than shipped with that trade-off. The
+compile output stays WebM, with a note in the popup pointing at
+[OpenShot](https://www.openshot.org/) (or any other free video tool) for
+scouts who need an MP4 afterward.
+
+If this gets revisited, the concrete next lever is capping the output
+resolution before encoding (e.g. 720p) — x264 encode time scales roughly
+with pixel count, so that would cut encode time by more than half for a
+1080p source. Switching to `ffmpeg.wasm`'s multi-threaded core is a bigger,
+riskier option that might help more, but needs a new dependency and
+cross-origin-isolation headers that haven't been verified to behave
+cleanly in an MV3 extension page.
 
 ## On-page overlay
 

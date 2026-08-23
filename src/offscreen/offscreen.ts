@@ -30,7 +30,7 @@
  * exactly the shared-stream trick above, applied one level up.
  */
 import { CANDIDATE_MIME_TYPES, MAX_ROLL_SECONDS, type CaptureRegion } from '../lib/types'
-import { concatAndTrimFront, concatClips, convertToMp4, correctPlaybackSpeed } from './ffmpeg'
+import { concatAndTrimFront, concatClips, correctPlaybackSpeed } from './ffmpeg'
 import { clearClipStore, deleteClipBlob, getClipBlob, saveClipBlob } from './clipStore'
 
 const CROP_FPS = 30
@@ -560,14 +560,8 @@ function discardPendingClip(sessionId: string): void {
   pendingBlobs.delete(sessionId)
 }
 
-/**
- * Compiles previously-saved clips (by clipId, from the match's clip list)
- * into one output, in the order given. If `exportAsMp4` is set, the
- * compiled result is additionally re-encoded to H.264/AAC MP4 as a final
- * step — see convertToMp4's doc comment in ffmpeg.ts for why that's safe
- * even though the *recording* format itself deliberately isn't MP4.
- */
-async function compileClips(clipIds: string[], exportAsMp4: boolean): Promise<{ url: string; mimeType: string }> {
+/** Compiles previously-saved clips (by clipId, from the match's clip list) into one output, in the order given. */
+async function compileClips(clipIds: string[]): Promise<{ url: string; mimeType: string }> {
   if (clipIds.length === 0) throw new Error('No clips selected to compile.')
   const blobs = await Promise.all(clipIds.map((id) => getClipBlob(id)))
   // Read the extension from the stored blobs' own tagged MIME type, not the
@@ -576,14 +570,9 @@ async function compileClips(clipIds: string[], exportAsMp4: boolean): Promise<{ 
   // document was recreated since. All clips in one match share a profile,
   // so the first blob's type is representative of all of them.
   const ext = (blobs[0].type || 'video/webm').startsWith('video/mp4') ? 'mp4' : 'webm'
-  let compiled = await concatClips(blobs.map((blob) => ({ blob, extension: ext })))
-  let outExt = ext
-  if (exportAsMp4 && ext !== 'mp4') {
-    compiled = await convertToMp4(compiled, ext)
-    outExt = 'mp4'
-  }
+  const compiled = await concatClips(blobs.map((blob) => ({ blob, extension: ext })))
   const url = URL.createObjectURL(compiled)
-  return { url, mimeType: compiled.type || `video/${outExt}` }
+  return { url, mimeType: compiled.type || `video/${ext}` }
 }
 
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
@@ -609,7 +598,7 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse(await takePendingClip(message.sessionId))
         break
       case 'OFFSCREEN_COMPILE':
-        sendResponse(await compileClips(message.clipIds, Boolean(message.exportAsMp4)))
+        sendResponse(await compileClips(message.clipIds))
         break
       case 'OFFSCREEN_CLEAR_CLIP_CACHE':
         await clearClipStore()
