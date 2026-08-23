@@ -102,7 +102,20 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
   const listContent = names.map((n) => `file '${n}'`).join('\n')
   await ffmpeg.writeFile('list.txt', listContent)
   cleanup.push('list.txt')
-  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', joined])
+  // Each segment comes from its own independent MediaRecorder instance,
+  // each restarting its own internal PTS/DTS near zero — the concat
+  // demuxer is supposed to rebase later files onto a continuous timeline
+  // when gluing them together with -c copy, but in practice this wasn't
+  // happening reliably for audio here, logged as repeated ffmpeg warnings
+  // ("Non-monotonous DTS in output stream 0:1") and each one silently
+  // patched by nudging the timestamp forward by the smallest possible
+  // amount instead of properly rebasing it. That collapsed real audio
+  // timing into near-duplicate timestamps right at the seam, which showed
+  // up as a playback glitch there even though no data was actually
+  // missing. +genpts tells the demuxer to regenerate presentation
+  // timestamps from frame duration rather than trusting each input file's
+  // own (mismatched) clock.
+  await ffmpeg.exec(['-fflags', '+genpts', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', joined])
 
   return { joined, ext, cleanup: [...cleanup, joined] }
 }

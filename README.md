@@ -498,6 +498,25 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       before the click before a segment is considered pre-roll material at
       all (`needed` in `stopSession`,
       [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)).
+    - A third, rarer issue remained after that: ffmpeg logging repeated
+      `Non-monotonous DTS in output stream 0:1` warnings during the concat
+      step, silently patched by nudging each broken timestamp forward by
+      the smallest possible amount rather than properly rebasing it. Each
+      standby segment comes from its own independent `MediaRecorder`
+      instance, each restarting its own internal PTS/DTS near zero — the
+      concat demuxer is supposed to rebase later files onto one continuous
+      timeline when gluing them together with `-c copy`, but wasn't doing
+      so reliably for audio here, collapsing real audio timing into
+      near-duplicate timestamps right at the seam. No JS-level error was
+      thrown (`ffmpeg.exec()` doesn't reject on a warning like this), so it
+      showed up as "the pre-roll sometimes doesn't load," roughly once per
+      6–7 clips, with nothing in the console pointing at it unless you knew
+      to look for `[ffmpeg]` lines specifically rather than the `[offscreen]
+      pre-roll trim failed` catch-all. Fixed by adding `-fflags +genpts` to
+      the concat step (`writeAndConcat` in
+      [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)), which tells the
+      demuxer to regenerate presentation timestamps from frame duration
+      instead of trusting each input file's own mismatched clock.
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).
