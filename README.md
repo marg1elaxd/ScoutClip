@@ -483,6 +483,21 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       `stopSession` in [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) —
       so the overlap is cut out before it ever reaches the join, rather than
       accepted as an unavoidable cost of closing the gap.
+    - That trim fix surfaced a second, previously-hidden bug: standby keeps
+      rotating on its own fixed schedule regardless of when Record actually
+      gets clicked, so a rotation can land shortly *after* the click too.
+      The segment picker only checked `endedAt > desiredStartMs` to decide
+      which standby segments were relevant — true for a segment that started
+      *after* the click as well, even though it isn't pre-roll history at
+      all (it doesn't cover any moment before the click). Pulled into the
+      splice, that segment's trim boundary math (which assumes the segment
+      started *before* the boundary it's being trimmed to) came out
+      negative, clamped to a ~0s sliver, and corrupted the join right at
+      that seam — reported as the saved clip skipping about a second right
+      where Record was clicked. Fixed by also requiring `startedAt` be
+      before the click before a segment is considered pre-roll material at
+      all (`needed` in `stopSession`,
+      [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)).
   - If the trim step fails for any reason, the clip still saves — just
     without pre-roll, falling back to the plain recorded clip rather than
     losing it (logged as `[offscreen] pre-roll trim failed`).

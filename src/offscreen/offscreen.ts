@@ -398,7 +398,16 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
   let pendingBlob: Blob
   if (session.preRollSeconds > 0) {
     const desiredStartMs = session.requestedAt - session.preRollSeconds * 1000
-    const needed = standbySegments.filter((s) => s.endedAt > desiredStartMs).sort((a, b) => a.startedAt - b.startedAt)
+    // Standby keeps rotating on its own fixed schedule regardless of when
+    // Record gets clicked, so a rotation can land shortly *after* the click
+    // too. A segment like that isn't pre-roll history at all (it started
+    // after the moment being recorded from), but endedAt > desiredStartMs
+    // alone doesn't rule it out — also require it to have actually started
+    // before the click, or it gets pulled in, trimmed to a ~0s sliver by
+    // the boundary math below, and corrupts the join right at that seam.
+    const needed = standbySegments
+      .filter((s) => s.endedAt > desiredStartMs && s.startedAt < session.requestedAt)
+      .sort((a, b) => a.startedAt - b.startedAt)
     if (needed.length > 0) {
       const joinedStartMs = needed[0].startedAt
       const offsetSeconds = Math.max(0, (desiredStartMs - joinedStartMs) / 1000)
@@ -417,11 +426,23 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
       const trimmedSegments = needed.map((s, i) => {
         const nextBoundaryMs = i + 1 < needed.length ? needed[i + 1].startedAt : session.requestedAt
         const trimToSeconds = Math.max(0, (nextBoundaryMs - s.startedAt) / 1000)
-        return { blob: s.blob, extension: ext, trimToSeconds }
+        return { blob: s.blob, extension: ext, trimToSeconds, debugRealDurationSeconds: (s.endedAt - s.startedAt) / 1000 }
+      })
+      console.log('[offscreen]', sessionId, 'pre-roll splice —', {
+        requestedAt: session.requestedAt,
+        desiredStartMs,
+        preRollSeconds: session.preRollSeconds,
+        offsetSeconds,
+        segments: trimmedSegments.map((s) => ({
+          trimToSeconds: s.trimToSeconds,
+          realDurationSeconds: s.debugRealDurationSeconds,
+        })),
       })
       try {
-        console.log('[offscreen]', sessionId, 'pre-roll trim: segments=', needed.length, 'offsetSeconds=', offsetSeconds.toFixed(2))
-        pendingBlob = await concatAndTrimFront([...trimmedSegments, { blob: activeClipBlob, extension: ext }], offsetSeconds)
+        pendingBlob = await concatAndTrimFront(
+          [...trimmedSegments.map(({ debugRealDurationSeconds: _drop, ...s }) => s), { blob: activeClipBlob, extension: ext }],
+          offsetSeconds,
+        )
       } catch (err) {
         console.error('[offscreen] pre-roll trim failed — saving clip without pre-roll instead', err)
         pendingBlob = activeClipBlob
