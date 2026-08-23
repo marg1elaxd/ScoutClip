@@ -307,86 +307,6 @@ function stopSegment(rec: MediaRecorder, chunksRef: Blob[], startedAt: number): 
 }
 
 /**
- * Snapshots whatever the *currently running* (not-yet-rotated) standby
- * segment has recorded so far, without stopping or disrupting it — pre-roll
- * splicing otherwise only has access to fully-rotated segments in
- * standbySegments, and the segment actively recording right now covers the
- * moments closest to "before the click," which are exactly what a short
- * preRollSeconds window most needs. Whenever a click happens to fall close
- * to a rotation boundary and the clip is stopped before that segment
- * naturally rotates out, that slice of history was completely unavailable —
- * not corrupted, just a genuine gap with nothing to splice in, reported as
- * pre-roll sometimes missing entirely.
- *
- * `MediaRecorder.requestData()` flushes the buffered-so-far data as a
- * `dataavailable` event (with data since the last flush, or since start if
- * none yet) *without* stopping the recorder — it keeps running and
- * accumulating into the same chunk array afterward exactly as if this were
- * never called, so its eventual real rotation is unaffected. The existing
- * `ondataavailable` property handler (set in startStandbySegment) already
- * pushes into that array; this just waits for that same event via a second
- * listener before reading it back.
- *
- * The rotation timer is deliberately paused for the duration of this flush.
- * If it fired while a requestData() call was still in flight, rotation
- * would call .stop() on the very same recorder moments later — two
- * near-simultaneous operations on one MediaRecorder that browsers don't
- * always handle as cleanly in practice as the spec implies, and which
- * produced a genuinely malformed segment blob in testing (ffmpeg aborting
- * with an internal "FS error" trying to process it). Pausing the timer
- * removes the possibility entirely rather than hoping the timing works out;
- * it's rescheduled once the flush resolves, at most a few ms later than it
- * otherwise would have fired — not a correctness concern.
- *
- * Standby is one *shared* history buffer used by every player that needs
- * pre-roll, not a per-player thing — so two players stopping around the
- * same time can each independently call this. Without deduplication that's
- * the exact same "two near-simultaneous operations on one recorder"
- * problem all over again, just from concurrent players instead of a
- * rotation collision: two requestData() calls landing on the same recorder
- * in quick succession. Single-flighted here so concurrent callers all
- * await the one in-flight flush instead of each triggering their own — the
- * shared snapshot is valid for all of them regardless of whose stop
- * triggered it, since each caller trims it against their own requestedAt
- * afterward anyway.
- */
-let pendingStandbyFlush: Promise<StandbySegment | null> | null = null
-
-function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
-  if (pendingStandbyFlush) return pendingStandbyFlush
-  pendingStandbyFlush = new Promise<StandbySegment | null>((resolve) => {
-    if (!standbyArmed || !standbyRecorder || standbyRecorder.state === 'inactive') {
-      resolve(null)
-      return
-    }
-    const startedAt = standbySegmentStartedAt ?? Date.now()
-    const rec = standbyRecorder
-    const chunksRef = standbyChunks
-    if (standbyRotationTimer != null) {
-      clearTimeout(standbyRotationTimer)
-      standbyRotationTimer = null
-    }
-    rec.addEventListener(
-      'dataavailable',
-      () => {
-        resolve({ blob: new Blob(chunksRef, { type: streamMimeType }), startedAt, endedAt: Date.now() })
-        // Only reschedule if this is still the live segment — a genuine
-        // rotation can't have snuck in while paused, but disarm/a new match
-        // could have moved on in the meantime.
-        if (standbyArmed && standbyRecorder === rec && standbyRotationTimer == null) {
-          standbyRotationTimer = setTimeout(rotateStandbySegment, STANDBY_ROTATION_SECONDS * 1000)
-        }
-      },
-      { once: true },
-    )
-    rec.requestData()
-  }).finally(() => {
-    pendingStandbyFlush = null
-  })
-  return pendingStandbyFlush
-}
-
-/**
  * MediaRecorder.stop() is async — the old recorder doesn't actually go
  * quiet until its `stop` event fires, one or more event-loop ticks later.
  * Waiting for that before starting the replacement left a real gap where
@@ -394,10 +314,12 @@ function flushCurrentStandbySegment(): Promise<StandbySegment | null> {
  * freeze-then-skip right at the seam. Starting the new recorder first and
  * letting it briefly overlap with the old one being torn down closes that
  * gap — worst case is a fraction of a second of duplicate frames at the
- * boundary, not a lost one.
+ * boundary, not a lost one. Returns the finalized segment, in addition to
+ * pushing it into standbySegments, so an on-demand caller (see
+ * rotateStandbySegmentNow) can use it immediately.
  */
-async function rotateStandbySegment() {
-  if (!standbyArmed || !standbyRecorder) return
+async function rotateStandbySegment(): Promise<StandbySegment | null> {
+  if (!standbyArmed || !standbyRecorder) return null
   const oldRec = standbyRecorder
   const oldChunks = standbyChunks
   const oldStartedAt = standbySegmentStartedAt ?? Date.now()
@@ -405,6 +327,53 @@ async function rotateStandbySegment() {
   const segment = await stopSegment(oldRec, oldChunks, oldStartedAt)
   standbySegments.push(segment)
   if (standbySegments.length > MAX_STANDBY_SEGMENTS) standbySegments.shift()
+  return segment
+}
+
+/**
+ * Forces an early rotation of the current standby segment right now,
+ * instead of waiting for its natural 15s cycle — used when a Stop needs
+ * pre-roll coverage of "right up to this moment" and the live segment
+ * hasn't rotated out yet (see stopSession).
+ *
+ * An earlier version tried to *peek* at the current segment's data via
+ * MediaRecorder.requestData() without stopping it, to avoid the cost of a
+ * full stop/restart. That didn't work for MP4: Chrome's MP4 MediaRecorder
+ * only writes the trailing "moov" atom (the container's sample/track
+ * index) once a recording is genuinely finalized via .stop() — a
+ * requestData() flush mid-recording produces media data with no moov atom
+ * at all, which no MP4 parser can open standalone ("moov atom not found" /
+ * "Invalid data found when processing input" from ffmpeg). WebM doesn't
+ * have this problem (designed to be parseable as a stream from the
+ * start), which is exactly why this was so inconsistent to chase down —
+ * it depended on which container the browser picked for MediaRecorder.
+ * Forcing a genuine early rotation instead sidesteps the problem entirely:
+ * a .stop()-finalized segment is always complete and valid, the same as
+ * every naturally-rotated segment already proved reliably.
+ *
+ * Standby is one *shared* history buffer used by every player that needs
+ * pre-roll, so two players stopping around the same time could otherwise
+ * each trigger their own rotation of the same live segment — single-
+ * flighted so concurrent callers share the one in-flight rotation instead.
+ * The resulting segment is valid for all of them regardless of whose stop
+ * triggered it, since each caller trims it against their own requestedAt
+ * afterward, and it's already in standbySegments for anyone else to use.
+ */
+let pendingStandbyRotation: Promise<StandbySegment | null> | null = null
+
+function rotateStandbySegmentNow(): Promise<StandbySegment | null> {
+  if (pendingStandbyRotation) return pendingStandbyRotation
+  pendingStandbyRotation = (async () => {
+    if (!standbyArmed || !standbyRecorder) return null
+    if (standbyRotationTimer != null) {
+      clearTimeout(standbyRotationTimer)
+      standbyRotationTimer = null
+    }
+    return rotateStandbySegment()
+  })().finally(() => {
+    pendingStandbyRotation = null
+  })
+  return pendingStandbyRotation
 }
 
 async function armStandby(streamId: string, region: CaptureRegion | null, bitrate: number) {
@@ -479,12 +448,19 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
   if (session.preRollSeconds > 0) {
     const desiredStartMs = session.requestedAt - session.preRollSeconds * 1000
     // The segment covering "right before the click" may not have rotated
-    // into standbySegments yet — force a snapshot of it now (see
-    // flushCurrentStandbySegment's doc comment) so it's available to splice
-    // even when the recording was too short for a natural rotation to have
-    // happened in the meantime.
-    const currentSegment = await flushCurrentStandbySegment()
-    const candidateSegments = currentSegment ? [...standbySegments, currentSegment] : standbySegments
+    // into standbySegments yet — force an early rotation now (see
+    // rotateStandbySegmentNow's doc comment) so it's available to splice,
+    // but only when it's actually needed: if already-rotated history
+    // already reaches up to the click, forcing a rotation anyway would
+    // just be extra unnecessary work on every single stop, reintroducing
+    // the "rotating too often stutters every concurrent recording"
+    // problem the fixed 15s cadence was chosen to avoid. rotateStandbySegmentNow
+    // pushes its result into standbySegments itself, so nothing further is
+    // needed here to make it available below.
+    const latestRotatedEndMs = standbySegments.reduce((max, s) => Math.max(max, s.endedAt), 0)
+    if (latestRotatedEndMs < session.requestedAt) {
+      await rotateStandbySegmentNow()
+    }
     // Standby keeps rotating on its own fixed schedule regardless of when
     // Record gets clicked, so a rotation can land shortly *after* the click
     // too. A segment like that isn't pre-roll history at all (it started
@@ -492,7 +468,7 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
     // alone doesn't rule it out — also require it to have actually started
     // before the click, or it gets pulled in, trimmed to a ~0s sliver by
     // the boundary math below, and corrupts the join right at that seam.
-    const needed = candidateSegments
+    const needed = standbySegments
       .filter((s) => s.endedAt > desiredStartMs && s.startedAt < session.requestedAt)
       .sort((a, b) => a.startedAt - b.startedAt)
     if (needed.length > 0) {

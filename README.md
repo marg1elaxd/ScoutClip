@@ -553,60 +553,60 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       that segment's *next* natural rotation, the slice of history covering
       "just before the click" was never captured anywhere — not corrupted,
       genuinely unavailable — reported as pre-roll sometimes missing
-      entirely. Fixed by forcing a snapshot of the current segment's
-      buffered-so-far data at Stop time via
-      `MediaRecorder.requestData()`, which flushes without stopping or
-      disrupting it — the recorder keeps running and accumulating normally
-      afterward, so its eventual real rotation is unaffected
-      (`flushCurrentStandbySegment` in
-      [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)).
-      - That flush introduced its own edge case: if the rotation timer fired
-        while a `requestData()` call was still in flight, rotation would
-        call `.stop()` on the very same recorder moments later — two
-        near-simultaneous operations on one `MediaRecorder` that don't
-        always behave as cleanly in practice as the spec implies. Observed
-        as ffmpeg aborting with an internal `FS error` on a single-player
-        recording (`[ffmpeg] Aborted()` followed by `[offscreen] pre-roll
-        trim failed ... ErrnoError: FS error`, the clip saving without
-        pre-roll via the same fallback as any splice failure). Fixed by
-        pausing the rotation timer for the duration of the flush instead of
-        relying on the timing working out — it's rescheduled once the flush
-        resolves, at most a few ms later than it otherwise would have
-        fired.
-      - The same class of race resurfaced from a different direction:
-        standby is one *shared* history buffer used by every player that
-        needs pre-roll, not a per-player thing. Two players stopping around
-        the same time each independently called `flushCurrentStandbySegment`
-        on the *same* underlying recorder — two `requestData()` calls
-        landing on it in quick succession, the identical problem as the
-        rotation-timer case above, just triggered by concurrent players
-        instead of a rotation collision. Fixed by single-flighting the
-        flush: concurrent callers now await the one in-flight flush instead
-        of each triggering their own — the shared snapshot is valid for all
-        of them regardless of whose stop triggered it, since each caller
-        still trims it against their own `requestedAt` afterward.
-      - Even after both of those races were closed, the same `FS error`
-        recurred a third time with no apparent timing collision — fresh
-        arm, single segment, trim math checking out exactly. Made the
-        per-segment trim fail gracefully (drop that segment, keep going
-        with the rest) as a stopgap, but the real gap turned out to be one
-        level up: `FFmpeg.exec()` resolves with the underlying process's
+      entirely.
+      - First fix attempt: snapshot the current segment's buffered-so-far
+        data at Stop time via `MediaRecorder.requestData()`, which flushes
+        without stopping the recorder — it keeps running and accumulating
+        normally afterward, so its eventual real rotation is unaffected.
+        This chased through three separate failure modes before being
+        abandoned: a race where a coincidental standby rotation calling
+        `.stop()` on the same recorder moments after a `requestData()`
+        call corrupted the result; the identical race resurfacing between
+        *concurrent players*, since standby is one shared history buffer,
+        not per-player; and — the one that finally explained all of
+        it — Chrome's MP4 `MediaRecorder` only writes the trailing "moov"
+        atom (the container's sample/track index) once a recording is
+        genuinely finalized via `.stop()`. A `requestData()` flush
+        mid-recording produces media data with no moov atom at all, which
+        no MP4 parser can open standalone (`moov atom not found` /
+        `Invalid data found when processing input` from ffmpeg — WebM
+        doesn't have this problem, which is exactly why the bug was so
+        inconsistent to chase: it depended on which container the browser
+        picked for `MediaRecorder`).
+      - Actual fix: stop trying to peek at the live segment at all.
+        `rotateStandbySegmentNow` in
+        [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) forces a
+        genuine early rotation instead — the same start-new-before-stop-old
+        pattern already used for the regular 15s cycle, just triggered on
+        demand. A `.stop()`-finalized segment is always complete and valid,
+        the same as every naturally-rotated one already proved reliably, so
+        this sidesteps the whole class of problem rather than working
+        around it. Only triggers when actually needed (already-rotated
+        history not yet reaching up to the click) — forcing an early
+        rotation on *every* stop regardless would reintroduce the "rotating
+        too often stutters every concurrent recording" problem the fixed
+        15s cadence exists to avoid. Single-flighted for the same
+        concurrent-players reason as the abandoned approach above.
+      - Diagnosing this also surfaced a real, independent gap worth keeping
+        regardless: `FFmpeg.exec()` resolves with the underlying process's
         **return code** — it does not reject just because ffmpeg crashed or
         aborted internally. Every `ffmpeg.exec()` call in
         [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts) was awaited with
         its result completely ignored, so a command that aborted mid-way
-        (a segment trim, or the concat step itself) was silently treated as
-        a success — code proceeded to reference output that was never
-        actually written, and the *real* failure only surfaced several
-        steps later as a confusing `joined.mp4: No such file or directory`
-        from an unrelated downstream read, well after the command that
-        actually failed. That also meant the graceful per-segment
-        degradation above likely never triggered in practice — there was
-        rarely an exception for it to catch. Every `ffmpeg.exec()` call now
-        goes through `execChecked`, which throws immediately on a non-zero
-        return code with the failing command included — turning a silent,
-        delayed, misattributed failure into an immediate, attributable one,
-        right where it actually happened.
+        was silently treated as a success — code proceeded to reference
+        output that was never actually written, and the failure only
+        surfaced several steps later as a confusing `joined.mp4: No such
+        file or directory` from an unrelated downstream read. This is
+        actually what made the moov-atom root cause identifiable in the
+        first place — every `ffmpeg.exec()` call now goes through
+        `execChecked`, which throws immediately on a non-zero return code
+        with the failing command included, turning a silent, delayed,
+        misattributed failure into an immediate, attributable one. Also
+        means a per-segment trim failure (`writeAndConcat`'s try/catch
+        around each segment, dropping just that one from the join rather
+        than failing the whole splice) now actually has something to catch
+        — it likely never triggered before this, since there was rarely an
+        exception for it to catch.
   - If every segment fails, or the splice throws for some other reason, the
     clip still saves — just without pre-roll, falling back to the plain
     recorded clip rather than losing it (logged as `[offscreen] pre-roll

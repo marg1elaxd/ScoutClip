@@ -158,14 +158,15 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
         cleanup.push(trimmedName)
         names.push(trimmedName)
       } catch (err) {
-        // Trimming one segment (most often the not-yet-rotated standby
-        // segment flushed via requestData() — see flushCurrentStandbySegment
-        // in offscreen.ts) has occasionally failed even with no apparent
-        // timing race, root cause not fully pinned down. Losing that one
-        // segment's slice of pre-roll is far better than losing the whole
-        // splice over it — drop it from the join and keep going with
-        // whatever else is available rather than letting this exception
-        // propagate and fail the entire operation.
+        // Defense in depth, not expected in normal operation: the known
+        // cause of a segment failing to trim here (a requestData()-flushed
+        // MP4 blob with no moov atom — see rotateStandbySegmentNow in
+        // offscreen.ts) was fixed at the source by not producing that kind
+        // of segment at all anymore. If a trim still fails for some other
+        // reason, losing that one segment's slice of pre-roll is far
+        // better than losing the whole splice over it — drop it from the
+        // join and keep going with whatever else is available rather than
+        // letting this exception propagate and fail the entire operation.
         console.error('[ffmpeg] failed to trim segment', i, '— excluding it from the join rather than failing the whole splice', err)
       }
     } else {
