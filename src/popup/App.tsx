@@ -699,7 +699,7 @@ export default function App() {
                         })
                       }}
                     >
-                      Save without tag
+                      No tag
                     </button>
                     <button
                       className="danger"

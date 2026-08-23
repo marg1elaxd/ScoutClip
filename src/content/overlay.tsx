@@ -308,7 +308,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                         })
                       }}
                     >
-                      Save without tag
+                      No tag
                     </button>
                     <button
                       className="danger"
