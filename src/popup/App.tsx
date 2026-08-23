@@ -643,15 +643,27 @@ export default function App() {
           const busy = isLocallyStopping || status === 'stopping' || status === 'pending-tag' || status === 'saving'
           return (
             <div key={p} className="player-record-row">
-              <button
-                className={`chip player-chip ${status === 'recording' && !isLocallyStopping ? 'live' : ''} ${busy ? 'busy' : ''}`}
-                disabled={busy}
-                onClick={() => handleChipClick(p)}
-              >
-                {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
-                {p}
-                {status === 'saving' ? ' · saving…' : ''}
-              </button>
+              <div className="player-chip-row">
+                <button
+                  className={`chip player-chip ${status === 'recording' && !isLocallyStopping ? 'live' : ''} ${busy ? 'busy' : ''}`}
+                  disabled={busy}
+                  onClick={() => handleChipClick(p)}
+                >
+                  {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
+                  {p}
+                  {status === 'saving' ? ' · saving…' : ''}
+                </button>
+                {status === 'idle' && (
+                  <button
+                    className="icon-btn"
+                    title="Remove player"
+                    aria-label={`Remove ${p}`}
+                    onClick={() => handleDeletePlayer(p)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               {countdown != null && <span className="status-line inline">+{countdown}s</span>}
 
               {status === 'pending-tag' && (

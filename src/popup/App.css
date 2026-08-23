@@ -153,6 +153,12 @@ button:disabled {
   gap: 4px;
 }
 
+.player-chip-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
 .player-chip {
   display: inline-flex;
   align-items: center;

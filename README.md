@@ -467,14 +467,20 @@ and storage strategy if that's wanted later.
   `pendingBlobs.delete(sessionId)` in
   [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) rather than
   deleting anything that was ever saved.
-- **Deleting a player** (✕ next to their name in the Clips section) removes
-  them from the active roster — their chip stops appearing, so they can't be
-  clicked to start a new recording — but doesn't touch anything already
-  saved: their clips stay in the list (still taggable — no, already tagged
-  by this point — still compilable and individually deletable) and their
-  files stay on disk exactly like every other delete-ish action in this
-  app. Blocked while that player has a clip in flight (recording, pending a
-  tag, saving), same guard as most match-state-mutating actions. The Clips
+- **Deleting a player** — a small ✕ next to their chip itself (popup and
+  overlay both, only shown while that player is idle — not while they have
+  a clip in flight) removes them from the active roster, so their chip
+  stops appearing and can't be clicked to start a new recording. Also
+  available as a ✕ in the Clips section's per-player header, for a player
+  who already has clips listed there. Neither touches anything already
+  saved: their clips stay in the list (still compilable and individually
+  deletable) and their files stay on disk exactly like every other
+  delete-ish action in this app. The chip-level control is the one that
+  actually matters for a player added by mistake with zero clips yet — the
+  Clips section only lists players who already have at least one clip, so
+  it alone couldn't remove someone before they'd recorded anything. Blocked
+  while that player has a clip in flight (recording, pending a tag,
+  saving), same guard as most match-state-mutating actions. The Clips
   section groups by whoever actually *has* clips (not the active roster),
   so a deleted player's history doesn't just disappear from view.
 - **Deleting a clip** (a Delete button next to Show, per clip row) removes

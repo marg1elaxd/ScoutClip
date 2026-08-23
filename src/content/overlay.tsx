@@ -81,9 +81,11 @@ const OVERLAY_CSS = `
   .chip.selected { background: #2f6feb; border-color: #2f6feb; color: white; font-weight: 600; }
   .player-rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .player-record-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
+  .player-chip-row { display: flex; align-items: center; gap: 4px; }
   .player-chip { display: inline-flex; align-items: center; gap: 6px; }
   .player-chip.live { background: #d1453b; border-color: #d1453b; color: white; font-weight: 600; }
   .player-chip.busy { opacity: 0.6; }
+  .chip-remove { padding: 2px 7px; font-size: 11px; flex-shrink: 0; }
   .rec-dot { width: 7px; height: 7px; border-radius: 50%; background: white; flex-shrink: 0; animation: rec-pulse 1.2s infinite; }
   @keyframes rec-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
   .add-player-row { display: flex; gap: 5px; margin-bottom: 8px; }
@@ -214,6 +216,11 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     setShowAddPlayer(false)
   }
 
+  async function handleDeletePlayer(player: string) {
+    if (!window.confirm(`Remove ${player} from the roster? Their saved clips stay untouched.`)) return
+    await call({ type: 'DELETE_PLAYER', playerName: player })
+  }
+
   const recordingPlayers = match.players.filter((p) => statusFor(p) === 'recording')
 
   if (minimized) {
@@ -253,15 +260,27 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
           const busy = isLocallyStopping || status === 'stopping' || status === 'pending-tag' || status === 'saving'
           return (
             <div key={p} className="player-record-row">
-              <button
-                className={`chip player-chip ${status === 'recording' && !isLocallyStopping ? 'live' : ''} ${busy ? 'busy' : ''}`}
-                disabled={busy}
-                onClick={() => handleChipClick(p)}
-              >
-                {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
-                {p}
-                {status === 'saving' ? ' · saving…' : ''}
-              </button>
+              <div className="player-chip-row">
+                <button
+                  className={`chip player-chip ${status === 'recording' && !isLocallyStopping ? 'live' : ''} ${busy ? 'busy' : ''}`}
+                  disabled={busy}
+                  onClick={() => handleChipClick(p)}
+                >
+                  {status === 'recording' && !isLocallyStopping && <span className="rec-dot" />}
+                  {p}
+                  {status === 'saving' ? ' · saving…' : ''}
+                </button>
+                {status === 'idle' && (
+                  <button
+                    className="chip-remove"
+                    title="Remove player"
+                    aria-label={`Remove ${p}`}
+                    onClick={() => handleDeletePlayer(p)}
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
               {countdown != null && <span className="status inline">+{countdown}s</span>}
 
               {status === 'pending-tag' && (
