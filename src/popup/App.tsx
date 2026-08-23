@@ -598,6 +598,16 @@ export default function App() {
     }
   }
 
+  async function handleCopyNotesFor(player: string | null) {
+    const notes = match.notes.filter((n) => n.playerName === player)
+    const text = formatRawNotes(notes, player === null ? [] : [player], settings.includeMinuteInNotes)
+    try {
+      await navigator.clipboard.writeText(text)
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    }
+  }
+
   const lastSavedName = lastSavedPath?.split('/').pop() ?? null
   const lastCompilationName = lastCompilationPath?.split('/').pop() ?? null
 
@@ -949,6 +959,9 @@ export default function App() {
               <div key={player ?? GENERAL_NOTE_KEY} className="clip-group">
                 <div className="clip-group-header">
                   <span>{player ?? GENERAL_NOTE_LABEL}</span>
+                  <button className="icon-btn" title="Copy raw notes for this" aria-label="Copy raw notes for this" onClick={() => handleCopyNotesFor(player)}>
+                    ⧉
+                  </button>
                 </div>
                 {playerNotes.map((note) => (
                   <div key={note.id} className="clip-row">
@@ -962,7 +975,7 @@ export default function App() {
             )
           })}
           <button className="full" onClick={handleCopyRawNotes}>
-            Copy raw notes
+            Copy all raw notes
           </button>
         </div>
       )}

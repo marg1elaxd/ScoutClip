@@ -486,13 +486,15 @@ warrant a clip, or context to go alongside one taken moments before/after.
   `text`, the match `minute` it was taken at, and a timestamp.
 - **Reviewing notes** — the popup has a **Notes (N)** toggle section,
   mirroring the Clips section: grouped by player (General first), listing
-  each note's text. A **Copy raw notes** button
+  each note's text. A **Copy all raw notes** button
   (`formatRawNotes` in `src/lib/notes.ts`) copies everything to the
   clipboard as flat, semicolon-joined lines per player — e.g.
   `Player Name - note one; note two` — deliberately unstructured, meant to
   be pasted straight into Obsidian, or into an LLM prompt to sort into
   whatever categories your own workflow uses, rather than read as a
-  polished document on its own.
+  polished document on its own. Each group header (including General) also
+  has its own small copy (⧉) button, for grabbing just that one player's —
+  or just General's — notes without the rest of the match along with it.
 - **Match minute display** — off by default; a Settings checkbox
   ("Show the match minute alongside each note") appends `(N′)` to each note
   both in the review list and in the copied raw text. The minute is always
