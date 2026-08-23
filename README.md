@@ -585,9 +585,26 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
         of each triggering their own — the shared snapshot is valid for all
         of them regardless of whose stop triggered it, since each caller
         still trims it against their own `requestedAt` afterward.
-  - If the trim step fails for any reason, the clip still saves — just
-    without pre-roll, falling back to the plain recorded clip rather than
-    losing it (logged as `[offscreen] pre-roll trim failed`).
+      - Even after both of those races were closed, the same `FS error`
+        recurred a third time with no apparent timing collision — fresh
+        arm, single segment, trim math checking out exactly. Root cause not
+        fully pinned down; trimming a `requestData()`-flushed blob via
+        stream copy appears to be inherently less reliable in ffmpeg than
+        trimming a naturally-completed (`.stop()`-produced) one, not solely
+        a timing issue. Rather than chase further theories blind,
+        `writeAndConcat` in [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)
+        now degrades gracefully instead: if trimming one segment fails,
+        that segment is dropped from the join and the rest proceed, so a
+        failure costs at most one slice of pre-roll rather than all of it.
+        Known limitation: if segment 0 specifically is the one dropped, the
+        front-trim offset (computed relative to it) no longer lines up with
+        the resulting file's timeline — not corrected for, since in
+        practice the failure has only ever hit the most recent
+        (`requestData()`-flushed) segment, which is always last, not first.
+  - If every segment fails, or the splice throws for some other reason, the
+    clip still saves — just without pre-roll, falling back to the plain
+    recorded clip rather than losing it (logged as `[offscreen] pre-roll
+    trim failed`).
   - **Pre-roll only (re)arms at Start Match**, not the instant you toggle it
     in Settings — arming needs a fresh `tabCapture` stream from a genuine
     user gesture, which the Settings screen's Save button isn't tied to a

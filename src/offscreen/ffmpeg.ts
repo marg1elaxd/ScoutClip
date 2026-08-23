@@ -104,7 +104,19 @@ async function readOutputBlob(ffmpeg: FFmpeg, path: string, mimeType: string): P
  * (concat demuxer, stream copy) into `joined.<ext>`. Any segment with
  * `trimToSeconds` set is cut down to that duration first, as its own
  * intermediate file, before being added to the concat list — see
- * TrimSegment's doc comment for why.
+ * TrimSegment's doc comment for why. If trimming a given segment fails, it's
+ * dropped from the join rather than failing the whole operation — losing
+ * one slice of pre-roll is far better than losing all of it.
+ *
+ * Known limitation: if the caller is relying on offsetSeconds (the
+ * concatAndTrimFront front-trim) computed relative to `segments[0]`, and
+ * segment 0 specifically is the one that fails to trim, that offset no
+ * longer lines up with the resulting joined file's timeline (which now
+ * starts from whichever segment survived first). Not corrected for here —
+ * accepted as a rare, strictly-better-than-total-failure edge case rather
+ * than threading the surviving-segment list back through offset math for a
+ * failure mode that in practice has only hit the most recent (not-yet-
+ * rotated, requestData()-flushed) segment, which is always last, not first.
  */
 async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<{ joined: string; ext: string; cleanup: string[] }> {
   const ext = segments[0].extension
@@ -120,13 +132,27 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
 
     if (seg.trimToSeconds != null) {
       const trimmedName = `segtrim${i}.${ext}`
-      await ffmpeg.exec(['-i', rawName, '-t', seg.trimToSeconds.toFixed(2), '-c', 'copy', trimmedName])
-      cleanup.push(trimmedName)
-      names.push(trimmedName)
+      try {
+        await ffmpeg.exec(['-i', rawName, '-t', seg.trimToSeconds.toFixed(2), '-c', 'copy', trimmedName])
+        cleanup.push(trimmedName)
+        names.push(trimmedName)
+      } catch (err) {
+        // Trimming one segment (most often the not-yet-rotated standby
+        // segment flushed via requestData() — see flushCurrentStandbySegment
+        // in offscreen.ts) has occasionally failed even with no apparent
+        // timing race, root cause not fully pinned down. Losing that one
+        // segment's slice of pre-roll is far better than losing the whole
+        // splice over it — drop it from the join and keep going with
+        // whatever else is available rather than letting this exception
+        // propagate and fail the entire operation.
+        console.error('[ffmpeg] failed to trim segment', i, '— excluding it from the join rather than failing the whole splice', err)
+      }
     } else {
       names.push(rawName)
     }
   }
+
+  if (names.length === 0) throw new Error('No segments survived trimming.')
 
   const listContent = names.map((n) => `file '${n}'`).join('\n')
   await ffmpeg.writeFile('list.txt', listContent)
