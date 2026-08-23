@@ -526,11 +526,25 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       showed up as "the pre-roll sometimes doesn't load," roughly once per
       6–7 clips, with nothing in the console pointing at it unless you knew
       to look for `[ffmpeg]` lines specifically rather than the `[offscreen]
-      pre-roll trim failed` catch-all. Fixed by adding `-fflags +genpts` to
-      the concat step (`writeAndConcat` in
-      [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)), which tells the
-      demuxer to regenerate presentation timestamps from frame duration
-      instead of trusting each input file's own mismatched clock.
+      pre-roll trim failed` catch-all.
+      First fix attempt added `-fflags +genpts` to the concat step
+      (`writeAndConcat` in [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)),
+      telling the demuxer to regenerate every presentation timestamp from
+      frame duration rather than trusting each input file's own mismatched
+      clock — which turned out worse than the warning it silenced:
+      regenerating *every* timestamp from scratch, rather than rebasing
+      each file's onto the one before it, could assign the *last* file in
+      the concat chain (always the active clip itself) timestamps that
+      didn't correctly continue after the pre-roll segments — which made
+      the front-trim step (`-ss offsetSeconds`, applied to the whole joined
+      file) think that content belonged *before* the cut point and drop
+      it, so the saved clip ended up containing only the pre-roll and none
+      of what was actually recorded after the click. Replaced with
+      `-avoid_negative_ts make_zero` on the concat step (already used
+      safely on the front-trim step) — it only shifts timestamps to avoid
+      negative/wrapped values, the specific thing that breaks DTS
+      monotonicity at a concat seam, without touching their relative
+      ordering the way wholesale regeneration did.
     - A fourth issue, structural rather than a bug in any single
       calculation: pre-roll splicing could only draw on segments that had
       already fully rotated into `standbySegments` — the segment actively

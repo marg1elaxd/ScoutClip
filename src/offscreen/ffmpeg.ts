@@ -138,13 +138,24 @@ async function writeAndConcat(ffmpeg: FFmpeg, segments: TrimSegment[]): Promise<
   // happening reliably for audio here, logged as repeated ffmpeg warnings
   // ("Non-monotonous DTS in output stream 0:1") and each one silently
   // patched by nudging the timestamp forward by the smallest possible
-  // amount instead of properly rebasing it. That collapsed real audio
-  // timing into near-duplicate timestamps right at the seam, which showed
-  // up as a playback glitch there even though no data was actually
-  // missing. +genpts tells the demuxer to regenerate presentation
-  // timestamps from frame duration rather than trusting each input file's
-  // own (mismatched) clock.
-  await ffmpeg.exec(['-fflags', '+genpts', '-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', joined])
+  // amount instead of properly rebasing it — a real but cosmetic playback
+  // glitch right at the seam, no data actually missing.
+  //
+  // -fflags +genpts (tried first) was worse than the problem it fixed:
+  // regenerating every presentation timestamp from scratch, rather than
+  // rebasing each file's onto the previous one's, could assign the *last*
+  // file in the chain (always the active clip itself here) timestamps that
+  // didn't correctly continue after the pre-roll segments before it — which
+  // made the front-trim step below (-ss offsetSeconds, applied to the whole
+  // joined file) think that content belonged *before* the cut point and
+  // drop it, so the saved clip ended up containing only the pre-roll and
+  // none of what was actually recorded after the click.
+  // -avoid_negative_ts make_zero is the gentler fix actually needed here:
+  // it only shifts timestamps to avoid negative/wrapped values (the
+  // specific thing that breaks DTS monotonicity at a concat seam) without
+  // touching their relative ordering, so it doesn't risk reshuffling
+  // content the way wholesale regeneration did.
+  await ffmpeg.exec(['-f', 'concat', '-safe', '0', '-i', 'list.txt', '-c', 'copy', '-avoid_negative_ts', 'make_zero', joined])
 
   return { joined, ext, cleanup: [...cleanup, joined] }
 }
