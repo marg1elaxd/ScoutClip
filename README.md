@@ -348,6 +348,21 @@ quality exactly matches the source clips).
   clips.<ext>` under `.../<Player>/Compilations/` for a single-player
   selection, or `Compilation - ...` under `.../Compilations/` (game-level,
   no player subfolder) for a mixed one.
+- **Export as MP4** (checkbox next to Compile): recording itself stays WebM
+  by default (see "How recording works" below for why), but a scout who
+  wants an MP4 to hand off elsewhere doesn't have to live with that —
+  checking this re-encodes the finished compilation to H.264/AAC MP4 as a
+  final step (`convertToMp4` in
+  [src/offscreen/ffmpeg.ts](src/offscreen/ffmpeg.ts)). Unlike the rest of
+  this app's ffmpeg work, this genuinely can't be a lossless stream copy —
+  WebM's codecs (VP9/Opus) aren't broadly playable inside an MP4
+  container — so it's a real decode + re-encode pass, slower than a normal
+  compile, reusing the same wasm-appropriate encoder settings as game speed
+  correction. Safe despite MP4's earlier problems: those were specifically
+  about a file peeked at *before* `MediaRecorder` finalizes it, and about
+  concatenating multiple independent recorder segments — this runs once, on
+  one single already-finished, already-concatenated file, the same shape of
+  operation as game speed correction, which has been reliable throughout.
 - **The real gap this had to close first**: `chrome.downloads` writes clips
   to disk but has no way to read a saved file's bytes back — so compiling
   needs the actual video data from somewhere. The offscreen document now

@@ -46,7 +46,14 @@ export type Message =
   | { type: 'START_RECORDING'; playerName: string; streamId?: string }
   | { type: 'STOP_RECORDING'; playerName: string }
   | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null }
-  | { type: 'COMPILE_CLIPS'; clipIds: string[] }
+  // Compilation output matches the source clips' own format (WebM by
+  // default) unless exportAsMp4 is set, in which case the offscreen
+  // document re-encodes the finished compilation to H.264/AAC MP4 as a
+  // final step — a one-time re-encode of a single already-complete file,
+  // not subject to the mid-recording-MP4 issues that pushed the recording
+  // format itself to WebM (see "Recording only part of the tab" /
+  // CANDIDATE_MIME_TYPES in types.ts).
+  | { type: 'COMPILE_CLIPS'; clipIds: string[]; exportAsMp4?: boolean }
   | { type: 'NEW_SESSION' }
 
 export interface StateSnapshot {

@@ -557,11 +557,12 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
 
       const players = new Set(selected.map((c) => c.playerName))
       const playerName = players.size === 1 ? selected[0].playerName : null
+      const outputExtension = message.exportAsMp4 ? 'mp4' : selected[0].extension
       const filename = buildCompilationFilename({
         playerName,
         matchInfo: match.matchInfo,
         clipCount: selected.length,
-        extension: selected[0].extension,
+        extension: outputExtension,
       })
       const path = buildCompilationPath({ matchInfo: match.matchInfo, playerName, filename })
 
@@ -569,6 +570,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       const { url, mimeType } = await sendToOffscreen<{ url: string; mimeType: string }>({
         type: 'OFFSCREEN_COMPILE',
         clipIds: selected.map((c) => c.clipId),
+        exportAsMp4: message.exportAsMp4,
       })
       const downloadId = await chrome.downloads.download({ url, filename: path, saveAs: false })
       console.log('[background] compilation queued', { downloadId, path, mimeType, clips: selected.length })
