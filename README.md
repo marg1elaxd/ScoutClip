@@ -543,7 +543,13 @@ starting.
 ## Clip list (current match only)
 
 The main screen lists every clip saved so far in the running match, grouped
-by player and sorted by minute, with a **Show** button per clip
+by player and sorted by minute. Each player's group has a ▾/▸ toggle in its
+header to collapse/expand just that player's clips — independent per player
+(collapsing one doesn't affect the others), so a long match with several
+players doesn't turn into one long scroll when you only care about one
+player's clips right now. Starts fully expanded; collapsed state isn't
+persisted (resets to expanded next time the popup opens). Also has a
+**Show** button per clip
 (`chrome.downloads.show(downloadId)`) that opens the OS file explorer with
 that file highlighted — a quick way to spot-check a clip right after tagging
 it. Scoped to "current match only" (`match.clips`, reset on the next

@@ -394,6 +394,11 @@ button:disabled {
   margin-bottom: 4px;
 }
 
+.clip-group-toggle {
+  padding: 2px 6px;
+  font-size: 11px;
+}
+
 .clip-select-all {
   display: flex;
   align-items: center;

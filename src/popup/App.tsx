@@ -107,6 +107,11 @@ export default function App() {
   const [regionPickerBusy, setRegionPickerBusy] = useState(false)
   const [showDetails, setShowDetails] = useState(false)
   const [showClips, setShowClips] = useState(false)
+  // Which players' clip groups are collapsed in the Clips section — starts
+  // empty (everyone expanded, matching prior behavior); collapsing specific
+  // groups is how a scout cuts down scrolling once there are several
+  // players with several clips each.
+  const [collapsedClipPlayers, setCollapsedClipPlayers] = useState<Set<string>>(new Set())
   const [showSettings, setShowSettings] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<RecordingSettings | null>(null)
   const [gameSpeedInput, setGameSpeedInput] = useState(1)
@@ -551,6 +556,15 @@ export default function App() {
     }
   }
 
+  function toggleClipGroupCollapsed(player: string) {
+    setCollapsedClipPlayers((prev) => {
+      const next = new Set(prev)
+      if (next.has(player)) next.delete(player)
+      else next.add(player)
+      return next
+    })
+  }
+
   async function handleDeletePlayer(player: string) {
     if (!window.confirm(`Remove ${player} from the roster? Their saved clips stay untouched and stay listed here.`)) return
     await call({ type: 'DELETE_PLAYER', playerName: player })
@@ -915,16 +929,27 @@ export default function App() {
               const playerClipIds = playerClips.map((c) => c.clipId)
               const allSelected = playerClipIds.every((id) => selectedClipIds.has(id))
               const isActivePlayer = match.players.includes(player)
+              const collapsed = collapsedClipPlayers.has(player)
               return (
               <div key={player} className="clip-group">
                 <div className="clip-group-header">
+                  <button
+                    className="icon-btn clip-group-toggle"
+                    title={collapsed ? 'Expand' : 'Collapse'}
+                    aria-label={collapsed ? `Expand ${player}'s clips` : `Collapse ${player}'s clips`}
+                    onClick={() => toggleClipGroupCollapsed(player)}
+                  >
+                    {collapsed ? '▸' : '▾'}
+                  </button>
                   <label className="clip-select-all">
                     <input
                       type="checkbox"
                       checked={allSelected}
                       onChange={() => setPlayerClipsSelected(playerClipIds, !allSelected)}
                     />
-                    <span>{player}</span>
+                    <span>
+                      {player} ({playerClips.length})
+                    </span>
                   </label>
                   {isActivePlayer && (
                     <button className="icon-btn" title="Remove player" aria-label="Remove player" onClick={() => handleDeletePlayer(player)}>
@@ -932,7 +957,8 @@ export default function App() {
                     </button>
                   )}
                 </div>
-                {playerClips
+                {!collapsed &&
+                  playerClips
                   .sort((a, b) => a.timestampMs - b.timestampMs)
                   .map((clip, i) => (
                     <div key={i} className="clip-row">
