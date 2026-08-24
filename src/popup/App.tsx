@@ -3,6 +3,7 @@ import { sendMessage, type StateSnapshot } from '../lib/messages'
 import {
   DEFAULT_ACTION_CATEGORIES,
   GAME_SPEED_OPTIONS,
+  MAX_LINEUP_IMAGES,
   MAX_ROLL_SECONDS,
   MIN_ROLL_SECONDS,
   type ActionCategoryName,
@@ -137,6 +138,14 @@ export default function App() {
   const [showLineup, setShowLineup] = useState(false)
   const [lineupTextDraft, setLineupTextDraft] = useState<string | null>(null)
   const [lineupImageBusy, setLineupImageBusy] = useState(false)
+  // Set while viewing one lineup image full-size — the popup temporarily
+  // widens (see the lightbox-active body class below) since its default
+  // 280px is nowhere near enough to read a lineup screenshot.
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null)
+
+  useEffect(() => {
+    document.body.classList.toggle('lightbox-active', lightboxImage != null)
+  }, [lightboxImage])
 
   useEffect(() => {
     sendMessage<StateSnapshot>({ type: 'GET_STATE' }).then(setState)
@@ -202,6 +211,20 @@ export default function App() {
   }
 
   if (!state) return <div>Loading…</div>
+
+  if (lightboxImage) {
+    return (
+      <div>
+        <div className="header-row">
+          <span className="match-title">Lineup screenshot</span>
+          <button className="icon-btn" title="Close" aria-label="Close" onClick={() => setLightboxImage(null)}>
+            ✕
+          </button>
+        </div>
+        <img className="lightbox-full-image" src={lightboxImage} alt="Lineup screenshot, full size" />
+      </div>
+    )
+  }
 
   if (showSettings) {
     const draft = settingsDraft ?? state.settings
@@ -635,12 +658,16 @@ export default function App() {
 
   async function handleLineupFile(file: File | null) {
     if (!file || !file.type.startsWith('image/')) return
+    if (match.lineup.imageDataUrls.length >= MAX_LINEUP_IMAGES) {
+      setError(`Up to ${MAX_LINEUP_IMAGES} lineup images.`)
+      return
+    }
     setLineupImageBusy(true)
     setError(null)
     try {
       const raw = await readFileAsDataUrl(file)
       const resized = await resizeImageDataUrl(raw)
-      await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: resized })
+      await call({ type: 'ADD_LINEUP_IMAGE', imageDataUrl: resized })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -648,8 +675,8 @@ export default function App() {
     }
   }
 
-  async function handleRemoveLineupImage() {
-    await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: null })
+  async function handleRemoveLineupImage(index: number) {
+    await call({ type: 'REMOVE_LINEUP_IMAGE', index })
   }
 
   const lastSavedName = lastSavedPath?.split('/').pop() ?? null
@@ -1042,24 +1069,40 @@ export default function App() {
 
       {showLineup && (
         <div className="clip-list">
-          {match.lineup.imageDataUrl ? (
-            <>
-              <img className="lineup-image" src={match.lineup.imageDataUrl} alt="Lineup screenshot" />
-              <button className="full" onClick={handleRemoveLineupImage}>
-                Remove image
-              </button>
-            </>
-          ) : (
-            <label className="lineup-dropzone">
-              {lineupImageBusy ? 'Processing…' : 'Click to upload a screenshot, or paste one into the text box below'}
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: 'none' }}
-                onChange={(e) => handleLineupFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-          )}
+          <div className="lineup-images-grid">
+            {match.lineup.imageDataUrls.map((url, i) => (
+              <div key={i} className="lineup-thumb-wrap">
+                <img
+                  className="lineup-thumb"
+                  src={url}
+                  alt={`Lineup screenshot ${i + 1}`}
+                  onClick={() => setLightboxImage(url)}
+                />
+                <button
+                  className="icon-btn lineup-thumb-remove"
+                  title="Remove image"
+                  aria-label={`Remove lineup screenshot ${i + 1}`}
+                  onClick={() => handleRemoveLineupImage(i)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {match.lineup.imageDataUrls.length < MAX_LINEUP_IMAGES && (
+              <label className="lineup-dropzone lineup-thumb-add">
+                {lineupImageBusy ? '…' : '+ Add'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => handleLineupFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            )}
+          </div>
+          <div className="status-line" style={{ marginTop: 0 }}>
+            Click a thumbnail to view it full-size, or paste (Ctrl+V) a screenshot into the box below to add it.
+          </div>
           <textarea
             className="lineup-textarea"
             placeholder="Type or paste the lineup…"

@@ -70,12 +70,10 @@ export type Message =
   // A quick text note, independent of the clip/recording pipeline entirely
   // — playerName null means a general match note, not tied to anyone.
   | { type: 'ADD_NOTE'; playerName: string | null; text: string }
-  // Reference-only lineup info (screenshot + free text) — see MatchLineup.
-  // Two separate messages rather than one patch-style message so "leave the
-  // image alone" (SET_LINEUP_TEXT) and "explicitly clear the image"
-  // (SET_LINEUP_IMAGE with null) aren't ambiguous.
+  // Reference-only lineup info (screenshots + free text) — see MatchLineup.
   | { type: 'SET_LINEUP_TEXT'; text: string }
-  | { type: 'SET_LINEUP_IMAGE'; imageDataUrl: string | null }
+  | { type: 'ADD_LINEUP_IMAGE'; imageDataUrl: string }
+  | { type: 'REMOVE_LINEUP_IMAGE'; index: number }
   | { type: 'NEW_SESSION' }
 
 export interface StateSnapshot {

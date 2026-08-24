@@ -1,5 +1,5 @@
 import type { CaptureRegion, MatchState, MatchNote, RecordingSettings, RecordingStatus, PendingClip } from '../lib/types'
-import { DEFAULT_SETTINGS, RECORDING_PROFILE } from '../lib/types'
+import { DEFAULT_SETTINGS, MAX_LINEUP_IMAGES, RECORDING_PROFILE } from '../lib/types'
 import {
   buildClipFilename,
   buildCompilationFilename,
@@ -37,7 +37,7 @@ function defaultMatch(): MatchState {
     gameSpeed: 1,
     clips: [],
     notes: [],
-    lineup: { text: '', imageDataUrl: null },
+    lineup: { text: '', imageDataUrls: [] },
   }
 }
 
@@ -665,8 +665,23 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       return snapshot()
     }
 
-    case 'SET_LINEUP_IMAGE': {
-      match = { ...match, lineup: { ...match.lineup, imageDataUrl: message.imageDataUrl } }
+    case 'ADD_LINEUP_IMAGE': {
+      if (match.lineup.imageDataUrls.length >= MAX_LINEUP_IMAGES) {
+        throw new Error(`Up to ${MAX_LINEUP_IMAGES} lineup images.`)
+      }
+      match = {
+        ...match,
+        lineup: { ...match.lineup, imageDataUrls: [...match.lineup.imageDataUrls, message.imageDataUrl] },
+      }
+      persist()
+      return snapshot()
+    }
+
+    case 'REMOVE_LINEUP_IMAGE': {
+      match = {
+        ...match,
+        lineup: { ...match.lineup, imageDataUrls: match.lineup.imageDataUrls.filter((_, i) => i !== message.index) },
+      }
       persist()
       return snapshot()
     }

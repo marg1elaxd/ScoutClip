@@ -72,9 +72,19 @@ export interface MatchNote {
  */
 export interface MatchLineup {
   text: string
-  /** Downscaled/re-encoded client-side before storage (see resizeImageDataUrl in lib/image.ts) so a raw screenshot doesn't blow past chrome.storage.session's quota. */
-  imageDataUrl: string | null
+  /**
+   * Up to MAX_LINEUP_IMAGES, since lineup graphics commonly come as several
+   * separate screenshots (e.g. home XI / away XI / home bench / away bench)
+   * rather than one combined image. Each is downscaled/re-encoded
+   * client-side before storage (see resizeImageDataUrl in lib/image.ts) so a
+   * handful of raw screenshots doesn't blow past chrome.storage.session's
+   * quota.
+   */
+  imageDataUrls: string[]
 }
+
+/** Lineup graphics commonly come as up to 4 separate screenshots — home/away XI, home/away bench. */
+export const MAX_LINEUP_IMAGES = 4
 
 export interface MatchState {
   matchInfo: string

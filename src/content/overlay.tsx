@@ -20,7 +20,7 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { sendMessage, type StateSnapshot } from '../lib/messages'
-import type { RecordingStatus } from '../lib/types'
+import { MAX_LINEUP_IMAGES, type RecordingStatus } from '../lib/types'
 import { GENERAL_NOTE_LABEL } from '../lib/notes'
 import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
 
@@ -123,10 +123,18 @@ const OVERLAY_CSS = `
   .footer { margin-top: 8px; font-size: 10px; color: #6b7580; }
   .lineup-toggle { width: 100%; margin-bottom: 8px; background: transparent; border-color: #2b333a; color: #9aa4ad; font-size: 11px; padding: 5px; }
   .lineup-panel { margin-bottom: 8px; }
-  .lineup-dropzone { display: flex; align-items: center; justify-content: center; text-align: center; padding: 14px 8px; border: 1px dashed #2b333a; border-radius: 8px; font-size: 10px; color: #9aa4ad; cursor: pointer; }
-  .lineup-dropzone:hover { border-color: #3a444d; color: #e8ecef; }
-  .lineup-image { display: block; width: 100%; max-height: 200px; object-fit: contain; border-radius: 8px; background: #1a2027; }
+  .lineup-images-grid { display: flex; flex-wrap: wrap; gap: 5px; margin-bottom: 6px; }
+  .lineup-thumb-wrap { position: relative; width: 50px; height: 50px; }
+  .lineup-thumb { width: 100%; height: 100%; object-fit: cover; border-radius: 6px; background: #1a2027; border: 1px solid #2b333a; cursor: pointer; display: block; }
+  .lineup-thumb-remove { position: absolute; top: -6px; right: -6px; padding: 0 5px; font-size: 9px; line-height: 1.6; border-radius: 999px; background: #1a2027; }
+  .lineup-dropzone, .lineup-thumb-add { display: flex; align-items: center; justify-content: center; text-align: center; border: 1px dashed #2b333a; border-radius: 8px; font-size: 10px; color: #9aa4ad; cursor: pointer; }
+  .lineup-thumb-add { width: 50px; height: 50px; padding: 0; font-size: 9px; }
+  .lineup-dropzone:hover, .lineup-thumb-add:hover { border-color: #3a444d; color: #e8ecef; }
   .lineup-textarea { width: 100%; box-sizing: border-box; min-height: 70px; margin-top: 6px; padding: 7px; border-radius: 6px; border: 1px solid #2b333a; background: #1a2027; color: #e8ecef; font-size: 12px; font-family: inherit; resize: vertical; }
+  .lightbox-backdrop { position: fixed; inset: 0; background: rgba(0,0,0,0.75); display: flex; align-items: center; justify-content: center; z-index: 2147483647; cursor: pointer; }
+  .lightbox-content { position: relative; max-width: 92vw; max-height: 92vh; cursor: default; }
+  .lightbox-img { display: block; max-width: 92vw; max-height: 92vh; object-fit: contain; border-radius: 8px; }
+  .lightbox-close { position: absolute; top: -12px; right: -12px; padding: 4px 9px; font-size: 13px; border-radius: 999px; }
 `
 
 function OverlayApp({ onClose }: { onClose: () => void }) {
@@ -147,6 +155,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [showLineup, setShowLineup] = useState(false)
   const [lineupTextDraft, setLineupTextDraft] = useState<string | null>(null)
   const [lineupImageBusy, setLineupImageBusy] = useState(false)
+  const [lightboxImage, setLightboxImage] = useState<string | null>(null)
 
   async function refresh() {
     try {
@@ -183,6 +192,15 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     return () => clearTimeout(id)
   }, [stopCountdowns])
 
+  useEffect(() => {
+    if (!lightboxImage) return
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') setLightboxImage(null)
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [lightboxImage])
+
   async function call(message: Parameters<typeof sendMessage>[0]) {
     setError(null)
     const res = await sendMessage<StateSnapshot & { error?: string }>(message)
@@ -194,6 +212,19 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   }
 
   if (!state) return null
+
+  if (lightboxImage) {
+    return (
+      <div className="lightbox-backdrop" onClick={() => setLightboxImage(null)}>
+        <div className="lightbox-content" onClick={(e) => e.stopPropagation()}>
+          <button className="lightbox-close" title="Close" aria-label="Close" onClick={() => setLightboxImage(null)}>
+            ✕
+          </button>
+          <img className="lightbox-img" src={lightboxImage} alt="Lineup screenshot, full size" />
+        </div>
+      </div>
+    )
+  }
 
   const { match, playerRecordingStatus, currentMinute, settings } = state
 
@@ -275,12 +306,16 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
 
   async function handleLineupFile(file: File | null) {
     if (!file || !file.type.startsWith('image/')) return
+    if (match.lineup.imageDataUrls.length >= MAX_LINEUP_IMAGES) {
+      setError(`Up to ${MAX_LINEUP_IMAGES} lineup images.`)
+      return
+    }
     setLineupImageBusy(true)
     setError(null)
     try {
       const raw = await readFileAsDataUrl(file)
       const resized = await resizeImageDataUrl(raw)
-      await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: resized })
+      await call({ type: 'ADD_LINEUP_IMAGE', imageDataUrl: resized })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -288,8 +323,8 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     }
   }
 
-  async function handleRemoveLineupImage() {
-    await call({ type: 'SET_LINEUP_IMAGE', imageDataUrl: null })
+  async function handleRemoveLineupImage(index: number) {
+    await call({ type: 'REMOVE_LINEUP_IMAGE', index })
   }
 
   async function handleDeletePlayer(player: string) {
@@ -330,24 +365,37 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
 
       {showLineup && (
         <div className="lineup-panel">
-          {match.lineup.imageDataUrl ? (
-            <>
-              <img className="lineup-image" src={match.lineup.imageDataUrl} alt="Lineup screenshot" />
-              <button className="full" onClick={handleRemoveLineupImage}>
-                Remove image
-              </button>
-            </>
-          ) : (
-            <label className="lineup-dropzone">
-              {lineupImageBusy ? 'Processing…' : 'Click to upload, or paste a screenshot below'}
-              <input
-                type="file"
-                accept="image/*"
-                style={{ display: 'none' }}
-                onChange={(e) => handleLineupFile(e.target.files?.[0] ?? null)}
-              />
-            </label>
-          )}
+          <div className="lineup-images-grid">
+            {match.lineup.imageDataUrls.map((url, i) => (
+              <div key={i} className="lineup-thumb-wrap">
+                <img
+                  className="lineup-thumb"
+                  src={url}
+                  alt={`Lineup screenshot ${i + 1}`}
+                  onClick={() => setLightboxImage(url)}
+                />
+                <button
+                  className="lineup-thumb-remove"
+                  title="Remove image"
+                  aria-label={`Remove lineup screenshot ${i + 1}`}
+                  onClick={() => handleRemoveLineupImage(i)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+            {match.lineup.imageDataUrls.length < MAX_LINEUP_IMAGES && (
+              <label className="lineup-dropzone lineup-thumb-add">
+                {lineupImageBusy ? '…' : '+ Add'}
+                <input
+                  type="file"
+                  accept="image/*"
+                  style={{ display: 'none' }}
+                  onChange={(e) => handleLineupFile(e.target.files?.[0] ?? null)}
+                />
+              </label>
+            )}
+          </div>
           <textarea
             className="lineup-textarea"
             placeholder="Type or paste the lineup…"

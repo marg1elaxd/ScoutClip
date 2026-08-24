@@ -517,19 +517,31 @@ warrant a clip, or context to go alongside one taken moments before/after.
 
 A **Lineup** toggle (popup and overlay both — this one's mirrored fully into
 the overlay, unlike Settings/Compile/clip-review, since the whole point is
-glancing at it mid-match without leaving the broadcast tab) holds a
-screenshot and/or free text for the current match's lineup, so you don't
+glancing at it mid-match without leaving the broadcast tab) holds up to 4
+screenshots and/or free text for the current match's lineup, so you don't
 have to alt-tab to Flashscore/Wyscout/whatever mid-game to double-check who's
 starting.
 
-- **Screenshot** — click to upload a file, or paste (Ctrl+V) directly into
-  the text box below it; a pasted image is detected and diverted to become
-  the lineup image instead of literal text. Re-encoded and downscaled
-  client-side (`resizeImageDataUrl` in `src/lib/image.ts`, capped at 900px
-  on the long edge, JPEG) before it's ever sent to the background — a raw
-  screenshot could otherwise get uncomfortably close to
-  `chrome.storage.session`'s quota, and there's no reason to render a
-  multi-megapixel image in a 240–280px-wide panel anyway.
+- **Screenshots** — up to `MAX_LINEUP_IMAGES` (4) at once, shown as a row of
+  small thumbnails, since lineup graphics commonly come as several separate
+  images rather than one (home XI / away XI / home bench / away bench is
+  the usual split). Click **+ Add** to upload a file, or paste (Ctrl+V)
+  directly into the text box below the thumbnails — a pasted image is
+  detected and diverted into the next thumbnail slot instead of being
+  pasted as literal text. Each is re-encoded and downscaled client-side
+  (`resizeImageDataUrl` in `src/lib/image.ts`, capped at 900px on the long
+  edge, JPEG) before it's ever sent to the background, so a handful of raw
+  screenshots doesn't get uncomfortably close to `chrome.storage.session`'s
+  quota.
+- **Click a thumbnail to view it full-size** — the thumbnail row exists
+  just to show what's loaded; actually reading a lineup needs real size.
+  In the overlay this opens a full-viewport lightbox (dark backdrop, image
+  centered near its native size, closable via ✕, Escape, or clicking the
+  backdrop) that floats above the broadcast page. The popup can't do a true
+  full-viewport overlay (it's a small, fixed-content browser popup window,
+  not a page element), so instead it swaps to a dedicated lightbox screen
+  and temporarily widens itself (`body.lightbox-active`, 280px → 480px) —
+  Chrome resizes the popup window to match — then reverts on close.
 - **Text** — a plain textarea, typed or pasted freely. Edited locally and
   only sent to the background on blur (not per keystroke), same reasoning
   as debouncing anywhere else in this app.
