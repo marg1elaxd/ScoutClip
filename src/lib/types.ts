@@ -57,6 +57,12 @@ export interface SavedClip {
  * recording-time choice — so toggling that setting mid-match doesn't
  * retroactively lose data either way.
  */
+/** Result of the most recent attempt to live-export notes to the export folder (see lib/noteExport.ts) — purely informational, shown in the Notes section. */
+export interface NoteExportStatus {
+  ok: boolean
+  detail: string
+}
+
 export interface MatchNote {
   id: string
   playerName: string | null

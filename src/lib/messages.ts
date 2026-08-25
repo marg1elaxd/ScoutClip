@@ -1,4 +1,4 @@
-import type { CaptureRegion, MatchState, RecordingSettings, RecordingStatus } from './types'
+import type { CaptureRegion, MatchState, NoteExportStatus, RecordingSettings, RecordingStatus } from './types'
 
 // ---- popup/background <-> background/offscreen message protocol ----
 // Every message has a `type` discriminant so listeners can switch on it.
@@ -92,6 +92,8 @@ export interface StateSnapshot {
   settings: RecordingSettings
   /** Whether pre-roll standby buffering is currently active — for the UI, and to catch a failed/missed arm. */
   preRollArmed: boolean
+  /** Result of the most recent live note-export attempt (see lib/noteExport.ts), null before any note has been saved this session. */
+  lastNoteExportStatus: NoteExportStatus | null
 }
 
 export function sendMessage<T = unknown>(message: Message): Promise<T> {

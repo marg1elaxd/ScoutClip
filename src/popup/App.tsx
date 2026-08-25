@@ -548,7 +548,8 @@ export default function App() {
     )
   }
 
-  const { match, playerRecordingStatus, currentMinute, lastSavedPath, lastCompilationPath, settings } = state
+  const { match, playerRecordingStatus, currentMinute, lastSavedPath, lastCompilationPath, lastNoteExportStatus, settings } =
+    state
 
   function statusFor(player: string): RecordingStatus {
     return playerRecordingStatus[player] ?? 'idle'
@@ -1158,6 +1159,12 @@ export default function App() {
       <button className="clip-toggle" onClick={() => setShowNotes((s) => !s)}>
         Notes ({match.notes.length}) {showNotes ? '▲' : '▼'}
       </button>
+
+      {lastNoteExportStatus && (
+        <div className="status-line" style={{ marginTop: 0, color: lastNoteExportStatus.ok ? '#7f8b94' : '#ff8a80' }}>
+          {lastNoteExportStatus.detail}
+        </div>
+      )}
 
       {showNotes && match.notes.length > 0 && (
         <div className="clip-list">

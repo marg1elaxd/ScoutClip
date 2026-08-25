@@ -519,7 +519,7 @@ warrant a clip, or context to go alongside one taken moments before/after.
   vault or otherwise). That's a deliberate next step, not an oversight — see
   "Export folder" below.
 
-## Export folder (plumbing only — not wired to anything yet)
+## Export folder & live Notes export
 
 Settings has an **Export folder** section: **Choose folder…** opens the
 browser's native folder picker (File System Access API,
@@ -529,29 +529,56 @@ and restarting the browser — unlike `chrome.storage`, IndexedDB can hold a
 `FileSystemDirectoryHandle` directly (it's structured-cloneable), and
 because this is extension-scoped storage, the same handle is readable from
 every extension context (popup, background service worker, offscreen
-document), not just whichever one picked it.
-
-This step deliberately does nothing else yet — nothing reads from or writes
-to the folder. It exists so a scout can pick a folder (e.g. their Obsidian
-vault) once, ahead of two follow-up features actually using it: live Obsidian
-export for Notes, and eventually moving clip saving off `chrome.downloads`
-entirely for silent writes. See "Two different reasons clips vs. notes need
-different handling" below for why those are separate, not one change.
+document), not just whichever one picked it. Confirmed working — the
+picker opens fine from the popup, no auto-close-on-blur issue.
 
 - **Permission re-granting**: Chromium expires File System Access
   permissions periodically (session-scoped by default), and re-granting
   requires an actual user gesture — it can't happen silently from the
   background. If Settings shows **Re-grant access**, that's why; clicking it
   re-prompts.
-- **Untested assumption worth flagging**: `showDirectoryPicker()` opens a
-  native OS dialog, and extension popups auto-close on blur in some Chrome
-  versions/configurations — which would kill the popup's JS (and this whole
-  flow) the instant the picker opens, before you ever get to choose a
-  folder. This couldn't be verified from a sandboxed dev environment. If
-  clicking **Choose folder…** makes the popup disappear instead of opening a
-  picker, that's this bug — the fix is moving folder selection to a
-  dedicated options page (`chrome.runtime.openOptionsPage()`), which doesn't
-  auto-close, instead of the transient popup.
+
+Once a folder is set, **notes export live**: every time a note is saved
+(`ADD_NOTE`, whether from the popup or the overlay), the background service
+worker rewrites a single `<Match Info> - Notes.md` file in that folder —
+plain text, same "flat, semicolon-joined per player" format as "Copy raw
+notes" (`formatRawNotes`, reused as-is), wrapped in a `# <Match Info>`
+heading (`src/lib/noteExport.ts`). It's a full rewrite each time, not an
+append — regenerated deterministically from `match.notes`, which is simpler
+than reconciling partial appends and means a mid-match toggle of "show the
+match minute" is reflected from the very next note instead of leaving old
+entries in a stale format. Two matches that happen to share the exact same
+Match Info text will overwrite each other's file — a known, narrow edge
+case, not handled specially (name matches distinctly if that matters to
+you).
+
+This is deliberately best-effort and silent-safe: a failed export (no
+folder set, permission not granted, disk error, whatever) never blocks or
+fails the note save itself — the note is already safely in extension
+storage regardless. The Notes section shows the last export attempt's
+result as a small status line either way, so you're not left guessing
+whether it's actually reaching Obsidian.
+
+- **Untested assumption worth flagging**: the write itself happens in the
+  background service worker (so it fires even if the popup that granted
+  folder permission is closed), reading the same handle back out of
+  IndexedDB. File System Access permissions are meant to be scoped to the
+  origin, not the specific window/tab/worker that requested them, and
+  handles are explicitly designed to be portable this way — but I could not
+  verify from a sandboxed dev environment that Chrome's Service Worker
+  implementation actually honors a permission grant made in the popup, or
+  that `getFileHandle`/`createWritable`/`write` all function correctly
+  inside a service worker at all. If the Notes section's status line
+  consistently shows an export failure even right after successfully
+  choosing and using the folder in Settings, that's this assumption
+  breaking — the fix would be moving the actual write into the popup (or
+  triggering a catch-up write when the popup next opens), rather than the
+  background.
+- Clips still save via `chrome.downloads`, untouched — this phase only
+  covers notes. Moving clip-saving onto this same folder is a separate,
+  later step (see the phase-2-vs-phase-4 discussion earlier in this
+  project's history) precisely because it's riskier: it touches the
+  already-working recording pipeline's last mile, not something net-new.
 
 ## Lineup (reference only)
 

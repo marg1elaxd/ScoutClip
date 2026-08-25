@@ -1,4 +1,14 @@
-import type { CaptureRegion, MatchState, MatchNote, RecordingSettings, RecordingStatus, PendingClip, SavedClip } from '../lib/types'
+import type {
+  CaptureRegion,
+  MatchState,
+  MatchNote,
+  NoteExportStatus,
+  RecordingSettings,
+  RecordingStatus,
+  PendingClip,
+  SavedClip,
+} from '../lib/types'
+import { exportNotesLive } from '../lib/noteExport'
 import { DEFAULT_SETTINGS, MAX_LINEUP_IMAGES, RECORDING_PROFILE } from '../lib/types'
 import {
   buildClipFilename,
@@ -48,6 +58,7 @@ let match: MatchState = defaultMatch()
 let playerRecordingStatus: Record<string, RecordingStatus> = {}
 let lastSavedPath: string | null = null
 let lastCompilationPath: string | null = null
+let lastNoteExportStatus: NoteExportStatus | null = null
 // Keyed by player name, same reasoning as playerRecordingStatus.
 let pendingClips: Record<string, PendingClip> = {}
 // Staged region selected before a match exists to attach it to (the picker
@@ -89,6 +100,7 @@ async function ensureHydrated() {
       'pendingClips',
       'lastSavedPath',
       'lastCompilationPath',
+      'lastNoteExportStatus',
       'draftCaptureRegion',
       'standbyArmed',
       'matchTabId',
@@ -100,6 +112,7 @@ async function ensureHydrated() {
   if (stored.pendingClips) pendingClips = stored.pendingClips as Record<string, PendingClip>
   if (stored.lastSavedPath !== undefined) lastSavedPath = stored.lastSavedPath as string | null
   if (stored.lastCompilationPath !== undefined) lastCompilationPath = stored.lastCompilationPath as string | null
+  if (stored.lastNoteExportStatus !== undefined) lastNoteExportStatus = stored.lastNoteExportStatus as NoteExportStatus | null
   if (stored.draftCaptureRegion !== undefined) draftCaptureRegion = stored.draftCaptureRegion as CaptureRegion | null
   if (stored.standbyArmed !== undefined) standbyArmed = Boolean(stored.standbyArmed)
   if (stored.matchTabId !== undefined) matchTabId = stored.matchTabId as number | null
@@ -113,6 +126,7 @@ function persist() {
     pendingClips,
     lastSavedPath,
     lastCompilationPath,
+    lastNoteExportStatus,
     draftCaptureRegion,
     standbyArmed,
     matchTabId,
@@ -167,6 +181,7 @@ function snapshot(): StateSnapshot {
     currentMinute: currentMinute(),
     lastSavedPath,
     lastCompilationPath,
+    lastNoteExportStatus,
     draftCaptureRegion,
     settings,
     preRollArmed: standbyArmed,
@@ -685,6 +700,10 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         savedAt: Date.now(),
       }
       match = { ...match, notes: [...match.notes, note] }
+      persist()
+      // Best-effort — never blocks or fails the note save itself, which has
+      // already succeeded in extension storage above regardless of this.
+      lastNoteExportStatus = await exportNotesLive(match, settings.includeMinuteInNotes)
       persist()
       return snapshot()
     }
