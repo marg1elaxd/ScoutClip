@@ -517,7 +517,41 @@ warrant a clip, or context to go alongside one taken moments before/after.
 - **What this isn't (yet)** — notes currently live only inside the
   extension's local storage; there's no live export to a file (Obsidian
   vault or otherwise). That's a deliberate next step, not an oversight — see
-  the project roadmap if you want to track it.
+  "Export folder" below.
+
+## Export folder (plumbing only — not wired to anything yet)
+
+Settings has an **Export folder** section: **Choose folder…** opens the
+browser's native folder picker (File System Access API,
+`window.showDirectoryPicker`), and the chosen folder handle is persisted in
+IndexedDB (`src/lib/folderHandleStore.ts`) so it survives closing the popup
+and restarting the browser — unlike `chrome.storage`, IndexedDB can hold a
+`FileSystemDirectoryHandle` directly (it's structured-cloneable), and
+because this is extension-scoped storage, the same handle is readable from
+every extension context (popup, background service worker, offscreen
+document), not just whichever one picked it.
+
+This step deliberately does nothing else yet — nothing reads from or writes
+to the folder. It exists so a scout can pick a folder (e.g. their Obsidian
+vault) once, ahead of two follow-up features actually using it: live Obsidian
+export for Notes, and eventually moving clip saving off `chrome.downloads`
+entirely for silent writes. See "Two different reasons clips vs. notes need
+different handling" below for why those are separate, not one change.
+
+- **Permission re-granting**: Chromium expires File System Access
+  permissions periodically (session-scoped by default), and re-granting
+  requires an actual user gesture — it can't happen silently from the
+  background. If Settings shows **Re-grant access**, that's why; clicking it
+  re-prompts.
+- **Untested assumption worth flagging**: `showDirectoryPicker()` opens a
+  native OS dialog, and extension popups auto-close on blur in some Chrome
+  versions/configurations — which would kill the popup's JS (and this whole
+  flow) the instant the picker opens, before you ever get to choose a
+  folder. This couldn't be verified from a sandboxed dev environment. If
+  clicking **Choose folder…** makes the popup disappear instead of opening a
+  picker, that's this bug — the fix is moving folder selection to a
+  dedicated options page (`chrome.runtime.openOptionsPage()`), which doesn't
+  auto-close, instead of the transient popup.
 
 ## Lineup (reference only)
 

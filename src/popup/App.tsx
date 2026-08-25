@@ -14,6 +14,14 @@ import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
 import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
 import { formatMmSs } from '../lib/time'
 import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
+import {
+  checkFolderPermission,
+  clearFolderHandle,
+  loadFolderHandle,
+  requestFolderPermission,
+  saveFolderHandle,
+  type FolderPermissionState,
+} from '../lib/folderHandleStore'
 
 /** Sentinel key for the general (not-tied-to-a-player) note field/target, alongside real player names in the same open-fields list. */
 const GENERAL_NOTE_KEY = '__general__'
@@ -120,6 +128,14 @@ export default function App() {
   const [collapsedClipPlayers, setCollapsedClipPlayers] = useState<Set<string>>(new Set())
   const [showSettings, setShowSettings] = useState(false)
   const [settingsDraft, setSettingsDraft] = useState<RecordingSettings | null>(null)
+  // Export folder: plumbing only for now (Phase 2) — nothing writes through
+  // this yet, it just lets a scout pick and persist a folder handle ahead
+  // of Notes/Clips export actually using it. Lives outside settingsDraft
+  // since a FileSystemDirectoryHandle isn't JSON-serializable and can't go
+  // through SET_SETTINGS/chrome.storage the way the rest of Settings does.
+  const [exportFolderName, setExportFolderName] = useState<string | null>(null)
+  const [exportFolderPermission, setExportFolderPermission] = useState<FolderPermissionState>('none')
+  const [folderBusy, setFolderBusy] = useState(false)
   const [gameSpeedInput, setGameSpeedInput] = useState(1)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [compiling, setCompiling] = useState(false)
@@ -162,6 +178,11 @@ export default function App() {
   }, [])
 
   useEffect(() => {
+    refreshFolderStatus()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
     if (!state?.match.clockRunning) return
     const id = setInterval(() => setTick((t) => t + 1), 1000)
     return () => clearInterval(id)
@@ -193,6 +214,48 @@ export default function App() {
       return
     }
     setState(res)
+  }
+
+  async function refreshFolderStatus() {
+    const handle = await loadFolderHandle()
+    setExportFolderName(handle?.name ?? null)
+    setExportFolderPermission(await checkFolderPermission(handle))
+  }
+
+  async function handleChooseFolder() {
+    setFolderBusy(true)
+    setError(null)
+    try {
+      const handle = await window.showDirectoryPicker({ mode: 'readwrite' })
+      await saveFolderHandle(handle)
+      await refreshFolderStatus()
+    } catch (err) {
+      if (err instanceof DOMException && err.name === 'AbortError') return
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+
+  async function handleRegrantFolderAccess() {
+    const handle = await loadFolderHandle()
+    if (!handle) return
+    setFolderBusy(true)
+    setError(null)
+    try {
+      const granted = await requestFolderPermission(handle)
+      setExportFolderPermission(granted ? 'granted' : 'needs-regrant')
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setFolderBusy(false)
+    }
+  }
+
+  async function handleClearExportFolder() {
+    await clearFolderHandle()
+    setExportFolderName(null)
+    setExportFolderPermission('none')
   }
 
   // Fire-and-forget: the picker overlay messages the background worker
@@ -328,6 +391,31 @@ export default function App() {
         <button className="primary record-btn" onClick={handleSaveSettings}>
           Save
         </button>
+
+        <div className="status-line" style={{ marginTop: 16, fontWeight: 600, color: '#e8ecef' }}>
+          Export folder
+        </div>
+        <div className="status-line" style={{ marginTop: 2 }}>
+          {exportFolderName
+            ? `Selected: ${exportFolderName}`
+            : "Not set — not used by anything yet, this just gets the folder picked and ready ahead of Notes/Clips export."}
+        </div>
+        <div className="row" style={{ marginTop: 6 }}>
+          <button disabled={folderBusy} onClick={handleChooseFolder}>
+            {exportFolderName ? 'Change folder…' : 'Choose folder…'}
+          </button>
+          {exportFolderPermission === 'needs-regrant' && (
+            <button disabled={folderBusy} onClick={handleRegrantFolderAccess}>
+              Re-grant access
+            </button>
+          )}
+          {exportFolderName && (
+            <button disabled={folderBusy} onClick={handleClearExportFolder}>
+              Clear
+            </button>
+          )}
+        </div>
+
         {error && <div className="error-line">{error}</div>}
       </div>
     )
