@@ -99,6 +99,16 @@ button.danger {
   font-weight: 600;
 }
 
+.star-toggle {
+  margin-bottom: 8px;
+}
+
+.star-toggle.primary {
+  background: #caa53d;
+  border-color: #caa53d;
+  color: #1a1400;
+}
+
 button:disabled {
   opacity: 0.5;
   cursor: not-allowed;

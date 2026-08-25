@@ -103,6 +103,11 @@ export default function App() {
   // countdown) is independent, since several can be at different points of
   // the record/tag flow at once.
   const [tagCategoryByPlayer, setTagCategoryByPlayer] = useState<Record<string, 'Offensive' | 'Defensive'>>({})
+  // Starred (highlight-worthy) is chosen in the tag panel, independent of
+  // category, before the category/No tag click that actually saves the
+  // clip — baked into the filename (HL prefix) at that point, since a
+  // downloaded file can't be renamed after the fact.
+  const [starredByPlayer, setStarredByPlayer] = useState<Record<string, boolean>>({})
   const [stoppingPlayers, setStoppingPlayers] = useState<Set<string>>(new Set())
   const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
   const [regionPickerBusy, setRegionPickerBusy] = useState(false)
@@ -118,6 +123,11 @@ export default function App() {
   const [gameSpeedInput, setGameSpeedInput] = useState(1)
   const [selectedClipIds, setSelectedClipIds] = useState<Set<string>>(new Set())
   const [compiling, setCompiling] = useState(false)
+  // 'tag' (Untagged -> Offensive -> Defensive) is the default per the
+  // scout's usual workflow (untagged clips are b-roll-style and go first);
+  // starred clips always lead regardless of this choice — see
+  // sortClipsForCompilation in background/index.ts.
+  const [compileOrder, setCompileOrder] = useState<'tag' | 'number'>('tag')
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
   const [retargeting, setRetargeting] = useState(false)
@@ -567,12 +577,23 @@ export default function App() {
     })
   }
 
+  function clearTagState(player: string) {
+    setTagCategoryByPlayer((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
+    setStarredByPlayer((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
+  }
+
   async function handleCompile() {
     if (selectedClipIds.size === 0) return
     setError(null)
     setCompiling(true)
     try {
-      await call({ type: 'COMPILE_CLIPS', clipIds: Array.from(selectedClipIds) })
+      await call({ type: 'COMPILE_CLIPS', clipIds: Array.from(selectedClipIds), order: compileOrder })
       setSelectedClipIds(new Set())
     } finally {
       setCompiling(false)
@@ -802,6 +823,7 @@ export default function App() {
           const status = statusFor(p)
           const countdown = stopCountdowns[p]
           const tagCategory = tagCategoryByPlayer[p] ?? null
+          const starred = starredByPlayer[p] ?? false
           // stoppingPlayers covers the gap between clicking Stop and this
           // popup's own state actually reflecting it — the backend does set
           // 'stopping' immediately, but that's only visible to *other*
@@ -840,6 +862,12 @@ export default function App() {
 
               {status === 'pending-tag' && (
                 <div className="tag-panel inline">
+                  <button
+                    className={`full star-toggle ${starred ? 'primary' : ''}`}
+                    onClick={() => setStarredByPlayer((prev) => ({ ...prev, [p]: !starred }))}
+                  >
+                    {starred ? '★ Highlight' : '☆ Mark as highlight'}
+                  </button>
                   <div className="category-row">
                     <button
                       className={tagCategory === 'Offensive' ? 'primary' : ''}
@@ -860,11 +888,8 @@ export default function App() {
                         <button
                           key={sub}
                           onClick={() => {
-                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}` })
-                            setTagCategoryByPlayer((prev) => {
-                              const { [p]: _drop, ...rest } = prev
-                              return rest
-                            })
+                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}`, starred })
+                            clearTagState(p)
                           }}
                         >
                           {sub}
@@ -876,11 +901,8 @@ export default function App() {
                     <button
                       style={{ flex: 1 }}
                       onClick={() => {
-                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
-                        setTagCategoryByPlayer((prev) => {
-                          const { [p]: _drop, ...rest } = prev
-                          return rest
-                        })
+                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null, starred })
+                        clearTagState(p)
                       }}
                     >
                       No tag
@@ -890,10 +912,7 @@ export default function App() {
                       style={{ flex: 1 }}
                       onClick={() => {
                         call({ type: 'DISCARD_CLIP', playerName: p })
-                        setTagCategoryByPlayer((prev) => {
-                          const { [p]: _drop, ...rest } = prev
-                          return rest
-                        })
+                        clearTagState(p)
                       }}
                     >
                       Discard
@@ -996,7 +1015,8 @@ export default function App() {
                           onChange={() => toggleClipSelected(clip.clipId)}
                         />
                         <span>
-                          #{clip.clipNumber} · {clip.actionType ?? 'Untagged'} · {formatMmSs(clip.timestampMs)}
+                          {clip.starred ? '★ ' : ''}#{clip.clipNumber} · {clip.actionType ?? 'Untagged'} ·{' '}
+                          {formatMmSs(clip.timestampMs)}
                         </span>
                       </label>
                       <div className="row" style={{ gap: 4 }}>
@@ -1012,8 +1032,26 @@ export default function App() {
             })
           }
 
+          <label className="status-line" style={{ marginTop: 8, marginBottom: 0, display: 'block' }}>
+            Order
+          </label>
+          <div className="category-row">
+            <button
+              className={compileOrder === 'tag' ? 'primary' : ''}
+              onClick={() => setCompileOrder('tag')}
+            >
+              By tag
+            </button>
+            <button
+              className={compileOrder === 'number' ? 'primary' : ''}
+              onClick={() => setCompileOrder('number')}
+            >
+              By clip number
+            </button>
+          </div>
           <div className="status-line" style={{ marginTop: 4 }}>
-            Compiles export as WebM. To convert to MP4, use a free tool like{' '}
+            Starred (★) clips always lead, regardless of order. Compiles export as WebM. To convert to MP4, use a
+            free tool like{' '}
             <a href="https://www.openshot.org/" target="_blank" rel="noreferrer">
               OpenShot
             </a>

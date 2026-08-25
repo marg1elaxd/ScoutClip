@@ -24,6 +24,8 @@ export function buildClipFilename(opts: {
   /** This player's Nth clip in the match (1-based) — keeps filenames unique when two clips land in the same minute. */
   clipNumber: number
   extension: string
+  /** Prefixes the filename with "HL - " so a highlight-worthy clip stands out immediately in the folder listing. */
+  starred: boolean
 }): string {
   const parts = [
     opts.playerName,
@@ -32,7 +34,8 @@ export function buildClipFilename(opts: {
     `${opts.minute}min`,
     `#${opts.clipNumber}`,
   ].map(sanitizeSegment)
-  return `${parts.join(' - ')}.${opts.extension}`
+  const prefix = opts.starred ? 'HL - ' : ''
+  return `${prefix}${parts.join(' - ')}.${opts.extension}`
 }
 
 /** `Downloads/ScoutClips/<Game>/<Player>/<clip>.<ext>` — the path chrome.downloads writes to. */

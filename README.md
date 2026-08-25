@@ -344,10 +344,16 @@ proven for pre-roll trimming (concat demuxer, no re-encoding, so output
 quality exactly matches the source clips).
 
 - Each clip row in the clip list now has a checkbox. Select any combination
-  (single player or mixed — there's no restriction), then **Compile selected
-  (N)**. Clips get joined in **chronological order** (by save time), not
-  click-selection order, so the reel plays out the way the match actually
-  happened regardless of the order you checked them in.
+  (single player or mixed — there's no restriction), then pick an **Order**
+  and hit **Compile selected (N)**. Clips are always joined in a deliberate
+  order (`sortClipsForCompilation` in `src/background/index.ts`), never
+  click-selection order:
+  - **By tag** (default) — Untagged clips first (the common use for these is
+    b-roll-style footage you want leading the reel), then Offensive, then
+    Defensive; chronological within each group.
+  - **By clip number** — plain chronological, ignoring tags entirely.
+  - **Starred clips always lead**, under either order — see "Starring a
+    highlight" below.
 - Output filename/location: `<Player> - Compilation - <Match Info> - <N>
   clips.<ext>` under `.../<Player>/Compilations/` for a single-player
   selection, or `Compilation - ...` under `.../Compilations/` (game-level,
@@ -570,6 +576,17 @@ Phase 4 compilation picker will need directly and keeps the data model
 simple; a full historical library across matches would need its own screen
 and storage strategy if that's wanted later.
 
+- **Starring a highlight** — the tag panel (popup and overlay both) has a
+  ☆ **Mark as highlight** toggle above the Offensive/Defensive choice.
+  Toggle it, then finish tagging as usual (category/subcategory, or "No
+  tag") — starring is independent of category, so a starred clip can still
+  be tagged or untagged. It has to happen here, at tag time, not as an
+  afterthought from the clip list later: the filename gets an `HL - `
+  prefix baked in the moment the file is downloaded
+  (`buildClipFilename` in [src/lib/filename.ts](src/lib/filename.ts)), and
+  `chrome.downloads` has no way to rename a file after the fact. Starred
+  clips show a ★ in the clip list and always sort first in a compilation
+  regardless of the chosen order (see "Compilation" above).
 - **Discarding a clip you didn't mean to take** — the tag panel (popup and
   overlay both) has a **Discard** button next to "Save without tag." Unlike
   every other clip action, this never touches `chrome.downloads` at all —

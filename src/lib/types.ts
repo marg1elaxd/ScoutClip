@@ -36,6 +36,8 @@ export interface SavedClip {
   timestampMs: number
   /** This player's Nth clip in the match (1-based) — also baked into the filename so same-minute clips don't collide. */
   clipNumber: number
+  /** Marked highlight-worthy in the tag panel at save time — baked into the filename (HL prefix) then, since a downloaded file can't be renamed after the fact. Always sorted first in a compilation regardless of the chosen order. */
+  starred: boolean
   filename: string
   path: string
   extension: string

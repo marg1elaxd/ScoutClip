@@ -45,7 +45,7 @@ export type Message =
   // already open for another concurrently-recording player.
   | { type: 'START_RECORDING'; playerName: string; streamId?: string }
   | { type: 'STOP_RECORDING'; playerName: string }
-  | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null }
+  | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null; starred: boolean }
   // Cancels a clip awaiting a tag without saving/downloading it at all —
   // for "clipped by mistake, don't want it lingering." Only valid while
   // that player's clip is actually pending a tag.
@@ -66,7 +66,11 @@ export type Message =
   // Compilation output always matches the source clips' own format (WebM
   // by default) — an MP4-export option was tried and reverted; see
   // "Compilation (Phase 4)" in the README for why.
-  | { type: 'COMPILE_CLIPS'; clipIds: string[] }
+  // order: 'tag' groups Untagged -> Offensive -> Defensive (chronological
+  // within each group); 'number' is plain chronological. Starred clips are
+  // always pulled to the front regardless of order, chronological among
+  // themselves.
+  | { type: 'COMPILE_CLIPS'; clipIds: string[]; order: 'tag' | 'number' }
   // A quick text note, independent of the clip/recording pipeline entirely
   // — playerName null means a general match note, not tied to anyone.
   | { type: 'ADD_NOTE'; playerName: string | null; text: string }

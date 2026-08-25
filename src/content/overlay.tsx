@@ -117,6 +117,8 @@ const OVERLAY_CSS = `
   .category-row button { flex: 1; }
   .subcategory-grid { display: flex; flex-wrap: wrap; gap: 5px; }
   .full { margin-top: 6px; width: 100%; }
+  .star-toggle { margin-bottom: 6px; }
+  .star-toggle.primary { background: #caa53d; border-color: #caa53d; color: #1a1400; }
   .status { margin-top: 6px; font-size: 11px; color: #9aa4ad; }
   .status.inline { margin-top: 0; }
   .error { margin-top: 6px; font-size: 11px; color: #ff8a80; }
@@ -141,6 +143,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [state, setState] = useState<StateSnapshot | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tagCategoryByPlayer, setTagCategoryByPlayer] = useState<Record<string, 'Offensive' | 'Defensive'>>({})
+  const [starredByPlayer, setStarredByPlayer] = useState<Record<string, boolean>>({})
   const [minimized, setMinimized] = useState(false)
   const [stoppingPlayers, setStoppingPlayers] = useState<Set<string>>(new Set())
   const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
@@ -327,6 +330,17 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     await call({ type: 'REMOVE_LINEUP_IMAGE', index })
   }
 
+  function clearTagState(player: string) {
+    setTagCategoryByPlayer((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
+    setStarredByPlayer((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
+  }
+
   async function handleDeletePlayer(player: string) {
     if (!window.confirm(`Remove ${player} from the roster? Their saved clips stay untouched.`)) return
     await call({ type: 'DELETE_PLAYER', playerName: player })
@@ -445,6 +459,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
           const status = statusFor(p)
           const countdown = stopCountdowns[p]
           const tagCategory = tagCategoryByPlayer[p] ?? null
+          const starred = starredByPlayer[p] ?? false
           // See the popup's identical comment: the backend's own 'stopping'
           // status isn't visible to this same caller until the whole
           // STOP_RECORDING call (including the post-roll wait) resolves.
@@ -480,6 +495,12 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
 
               {status === 'pending-tag' && (
                 <div className="tag-panel inline">
+                  <button
+                    className={`full star-toggle ${starred ? 'primary' : ''}`}
+                    onClick={() => setStarredByPlayer((prev) => ({ ...prev, [p]: !starred }))}
+                  >
+                    {starred ? '★ Highlight' : '☆ Mark as highlight'}
+                  </button>
                   <div className="category-row">
                     <button
                       className={tagCategory === 'Offensive' ? 'primary' : ''}
@@ -500,11 +521,8 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                         <button
                           key={sub}
                           onClick={() => {
-                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}` })
-                            setTagCategoryByPlayer((prev) => {
-                              const { [p]: _drop, ...rest } = prev
-                              return rest
-                            })
+                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}`, starred })
+                            clearTagState(p)
                           }}
                         >
                           {sub}
@@ -515,11 +533,8 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                   <div className="category-row">
                     <button
                       onClick={() => {
-                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null })
-                        setTagCategoryByPlayer((prev) => {
-                          const { [p]: _drop, ...rest } = prev
-                          return rest
-                        })
+                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null, starred })
+                        clearTagState(p)
                       }}
                     >
                       No tag
@@ -528,10 +543,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                       className="danger"
                       onClick={() => {
                         call({ type: 'DISCARD_CLIP', playerName: p })
-                        setTagCategoryByPlayer((prev) => {
-                          const { [p]: _drop, ...rest } = prev
-                          return rest
-                        })
+                        clearTagState(p)
                       }}
                     >
                       Discard

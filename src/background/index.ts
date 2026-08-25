@@ -1,4 +1,4 @@
-import type { CaptureRegion, MatchState, MatchNote, RecordingSettings, RecordingStatus, PendingClip } from '../lib/types'
+import type { CaptureRegion, MatchState, MatchNote, RecordingSettings, RecordingStatus, PendingClip, SavedClip } from '../lib/types'
 import { DEFAULT_SETTINGS, MAX_LINEUP_IMAGES, RECORDING_PROFILE } from '../lib/types'
 import {
   buildClipFilename,
@@ -133,6 +133,33 @@ function currentMinute(): number {
   return Math.floor(currentElapsedMs() / 60000)
 }
 
+/** Untagged first (per the scout's b-roll-style workflow), then Offensive, then Defensive. actionType is stored as "<Category> <Subcategory>" (see the tag panel), so the category is just its leading word. */
+function clipCategoryRank(actionType: string | null): number {
+  if (actionType == null) return 0
+  if (actionType.startsWith('Offensive')) return 1
+  return 2
+}
+
+/**
+ * Orders clips for a compilation export. Starred (highlight) clips always
+ * lead, chronological among themselves, regardless of `order` — the whole
+ * point of starring is "put this first." The rest follow either plain
+ * chronological ('number') or grouped by category ('tag'), chronological
+ * within each group.
+ */
+function sortClipsForCompilation(clips: SavedClip[], order: 'tag' | 'number'): SavedClip[] {
+  const starred = clips.filter((c) => c.starred).sort((a, b) => a.timestampMs - b.timestampMs)
+  const rest = clips.filter((c) => !c.starred)
+  rest.sort((a, b) => {
+    if (order === 'tag') {
+      const rankDiff = clipCategoryRank(a.actionType) - clipCategoryRank(b.actionType)
+      if (rankDiff !== 0) return rankDiff
+    }
+    return a.timestampMs - b.timestampMs
+  })
+  return [...starred, ...rest]
+}
+
 function snapshot(): StateSnapshot {
   return {
     match,
@@ -182,7 +209,7 @@ function scheduleRevoke(downloadId: number, url: string) {
  * Shared by the normal tag-and-save flow and by the orphaned-clip safety net
  * in START_RECORDING, so a clip is never silently dropped either way.
  */
-async function finalizePendingClip(clip: PendingClip, actionType: string | null): Promise<void> {
+async function finalizePendingClip(clip: PendingClip, actionType: string | null, starred: boolean): Promise<void> {
   let clipUrl: string | null = null
   try {
     // Neither context has everything: chrome.downloads is unavailable in
@@ -208,6 +235,7 @@ async function finalizePendingClip(clip: PendingClip, actionType: string | null)
       minute: clip.minute,
       clipNumber,
       extension,
+      starred,
     })
     const path = buildDownloadPath({ matchInfo: clip.matchInfo, playerName: clip.playerName, filename })
 
@@ -226,6 +254,7 @@ async function finalizePendingClip(clip: PendingClip, actionType: string | null)
           minute: clip.minute,
           timestampMs: clip.timestampMs,
           clipNumber,
+          starred,
           filename,
           path,
           extension,
@@ -463,7 +492,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         console.warn('[background] starting a new recording with an unresolved pending clip — auto-saving it as Untagged')
         const orphan = pendingClips[playerName]
         try {
-          await finalizePendingClip(orphan, null)
+          await finalizePendingClip(orphan, null, false)
         } catch (err) {
           console.error('[background] could not recover orphaned pending clip', err)
         }
@@ -544,7 +573,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'saving' }
       persist()
       try {
-        await finalizePendingClip(clip, message.actionType)
+        await finalizePendingClip(clip, message.actionType, message.starred)
       } catch (err) {
         console.error('[background] save failed', err)
         playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'pending-tag' }
@@ -614,27 +643,28 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         .map((id) => match.clips.find((c) => c.clipId === id))
         .filter((c): c is (typeof match.clips)[number] => c != null)
       if (selected.length === 0) throw new Error('Selected clips are no longer available.')
-      // Chronological, not click-order — a highlight reel should play out
-      // in the order the action actually happened in the match.
-      selected.sort((a, b) => a.savedAt - b.savedAt)
+      // Not click-order — a highlight reel should play out in a deliberate
+      // order, not whatever sequence the checkboxes happened to be clicked
+      // in. See sortClipsForCompilation for the actual ordering rules.
+      const ordered = sortClipsForCompilation(selected, message.order)
 
-      const players = new Set(selected.map((c) => c.playerName))
-      const playerName = players.size === 1 ? selected[0].playerName : null
+      const players = new Set(ordered.map((c) => c.playerName))
+      const playerName = players.size === 1 ? ordered[0].playerName : null
       const filename = buildCompilationFilename({
         playerName,
         matchInfo: match.matchInfo,
-        clipCount: selected.length,
-        extension: selected[0].extension,
+        clipCount: ordered.length,
+        extension: ordered[0].extension,
       })
       const path = buildCompilationPath({ matchInfo: match.matchInfo, playerName, filename })
 
       await ensureOffscreenDocument()
       const { url, mimeType } = await sendToOffscreen<{ url: string; mimeType: string }>({
         type: 'OFFSCREEN_COMPILE',
-        clipIds: selected.map((c) => c.clipId),
+        clipIds: ordered.map((c) => c.clipId),
       })
       const downloadId = await chrome.downloads.download({ url, filename: path, saveAs: false })
-      console.log('[background] compilation queued', { downloadId, path, mimeType, clips: selected.length })
+      console.log('[background] compilation queued', { downloadId, path, mimeType, clips: ordered.length })
       scheduleRevoke(downloadId, url)
       lastCompilationPath = path
       persist()
@@ -695,7 +725,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       // every player with a clip still awaiting a tag, not just one.
       for (const orphan of Object.values(pendingClips)) {
         try {
-          await finalizePendingClip(orphan, null)
+          await finalizePendingClip(orphan, null, false)
         } catch (err) {
           console.error('[background] could not recover orphaned pending clip during New Session', err)
         }
