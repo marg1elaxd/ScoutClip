@@ -12,6 +12,7 @@ import {
 } from '../lib/types'
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
 import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
+import { parseRosterPaste } from '../lib/roster'
 import { formatMmSs } from '../lib/time'
 import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
 import {
@@ -107,6 +108,8 @@ export default function App() {
   const [matchInfoInput, setMatchInfoInput] = useState('')
   const [playerInput, setPlayerInput] = useState('')
   const [rosterDraft, setRosterDraft] = useState<string[]>([])
+  const [showRosterPaste, setShowRosterPaste] = useState(false)
+  const [rosterPasteText, setRosterPasteText] = useState('')
   // Keyed by player name — each player's tag panel (and Stop's post-roll
   // countdown) is independent, since several can be at different points of
   // the record/tag flow at once.
@@ -146,6 +149,8 @@ export default function App() {
   const [compileOrder, setCompileOrder] = useState<'tag' | 'number'>('tag')
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
+  const [showMatchRosterPaste, setShowMatchRosterPaste] = useState(false)
+  const [matchRosterPasteText, setMatchRosterPasteText] = useState('')
   const [retargeting, setRetargeting] = useState(false)
   // Note-taking: any number of note fields can be open at once (one per
   // player, plus at most one general), stacked above the roster rather than
@@ -480,6 +485,52 @@ export default function App() {
           </ul>
         )}
 
+        {!showRosterPaste ? (
+          <button className="full" onClick={() => setShowRosterPaste(true)}>
+            Paste roster instead
+          </button>
+        ) : (
+          <div>
+            <textarea
+              className="lineup-textarea"
+              autoFocus
+              value={rosterPasteText}
+              onChange={(e) => setRosterPasteText(e.target.value)}
+              placeholder={'Paste from Obsidian, e.g.:\n8 - [[Yolande Mylene Zoua, 2010]] - '}
+            />
+            <div className="status-line" style={{ marginTop: 2 }}>
+              {(() => {
+                const n = parseRosterPaste(rosterPasteText).length
+                return n > 0 ? `Found ${n} player${n === 1 ? '' : 's'}.` : 'Paste lines like "8 - [[Name, Year]] - ".'
+              })()}
+            </div>
+            <div className="row" style={{ marginTop: 6 }}>
+              <button
+                className="primary"
+                style={{ flex: 1 }}
+                disabled={parseRosterPaste(rosterPasteText).length === 0}
+                onClick={() => {
+                  const parsed = parseRosterPaste(rosterPasteText)
+                  setRosterDraft((r) => [...r, ...parsed.filter((p) => !r.includes(p))])
+                  setRosterPasteText('')
+                  setShowRosterPaste(false)
+                }}
+              >
+                Add parsed players
+              </button>
+              <button
+                style={{ flex: 1 }}
+                onClick={() => {
+                  setShowRosterPaste(false)
+                  setRosterPasteText('')
+                }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        )}
+
         <label>Match video region (optional)</label>
         <div className="row">
           <button disabled={regionPickerBusy} onClick={handleOpenRegionPicker}>
@@ -644,6 +695,14 @@ export default function App() {
     await call({ type: 'ADD_PLAYER', playerName: name })
     setNewPlayerName('')
     setShowAddPlayer(false)
+  }
+
+  async function handleAddPlayersFromPaste() {
+    const parsed = parseRosterPaste(matchRosterPasteText)
+    if (parsed.length === 0) return
+    await call({ type: 'ADD_PLAYERS', playerNames: parsed })
+    setMatchRosterPasteText('')
+    setShowMatchRosterPaste(false)
   }
 
   function toggleClipSelected(clipId: string) {
@@ -1012,9 +1071,14 @@ export default function App() {
             </div>
           )
         })}
-        {!showAddPlayer && (
+        {!showAddPlayer && !showMatchRosterPaste && (
           <button className="chip" title="Add player" onClick={() => setShowAddPlayer(true)}>
             +
+          </button>
+        )}
+        {!showAddPlayer && !showMatchRosterPaste && (
+          <button className="chip" title="Paste roster" onClick={() => setShowMatchRosterPaste(true)}>
+            + Paste roster
           </button>
         )}
         <button className="chip" title="General note" onClick={() => toggleNoteField(GENERAL_NOTE_KEY)}>
@@ -1041,6 +1105,43 @@ export default function App() {
           <button className="primary" onClick={handleAddPlayer}>
             Add
           </button>
+        </div>
+      )}
+
+      {showMatchRosterPaste && (
+        <div style={{ marginBottom: 8 }}>
+          <textarea
+            className="lineup-textarea"
+            autoFocus
+            value={matchRosterPasteText}
+            onChange={(e) => setMatchRosterPasteText(e.target.value)}
+            placeholder={'Paste from Obsidian, e.g.:\n8 - [[Yolande Mylene Zoua, 2010]] - '}
+          />
+          <div className="status-line" style={{ marginTop: 2 }}>
+            {(() => {
+              const n = parseRosterPaste(matchRosterPasteText).length
+              return n > 0 ? `Found ${n} player${n === 1 ? '' : 's'}.` : 'Paste lines like "8 - [[Name, Year]] - ".'
+            })()}
+          </div>
+          <div className="row" style={{ marginTop: 6 }}>
+            <button
+              className="primary"
+              style={{ flex: 1 }}
+              disabled={parseRosterPaste(matchRosterPasteText).length === 0}
+              onClick={handleAddPlayersFromPaste}
+            >
+              Add parsed players
+            </button>
+            <button
+              style={{ flex: 1 }}
+              onClick={() => {
+                setShowMatchRosterPaste(false)
+                setMatchRosterPasteText('')
+              }}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

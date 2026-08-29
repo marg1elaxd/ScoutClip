@@ -351,6 +351,17 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       return snapshot()
     }
 
+    case 'ADD_PLAYERS': {
+      const players = [...match.players]
+      for (const raw of message.playerNames) {
+        const name = raw.trim()
+        if (name && !players.includes(name)) players.push(name)
+      }
+      match = { ...match, players }
+      persist()
+      return snapshot()
+    }
+
     case 'SET_CAPTURE_REGION':
       // Sent directly by the injected picker overlay (not the popup — see
       // regionPicker.ts), so it can arrive whether or not a match is active

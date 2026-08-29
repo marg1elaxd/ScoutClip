@@ -22,6 +22,7 @@ import { useEffect, useState } from 'react'
 import { sendMessage, type StateSnapshot } from '../lib/messages'
 import { MAX_LINEUP_IMAGES, type RecordingStatus } from '../lib/types'
 import { GENERAL_NOTE_LABEL } from '../lib/notes'
+import { parseRosterPaste } from '../lib/roster'
 import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
 
 const HOST_ID = 'scout-clip-recorder-overlay-host'
@@ -149,6 +150,8 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
+  const [showRosterPaste, setShowRosterPaste] = useState(false)
+  const [rosterPasteText, setRosterPasteText] = useState('')
   // Note-taking: any number of note fields can be open at once (one per
   // player, plus at most one general), stacked above the roster rather than
   // inline per-chip, so writing a note never blocks clicking a chip to
@@ -272,6 +275,14 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
     await call({ type: 'ADD_PLAYER', playerName: name })
     setNewPlayerName('')
     setShowAddPlayer(false)
+  }
+
+  async function handleAddPlayersFromPaste() {
+    const parsed = parseRosterPaste(rosterPasteText)
+    if (parsed.length === 0) return
+    await call({ type: 'ADD_PLAYERS', playerNames: parsed })
+    setRosterPasteText('')
+    setShowRosterPaste(false)
   }
 
   function toggleNoteField(target: string) {
@@ -554,9 +565,14 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
             </div>
           )
         })}
-        {!showAddPlayer && (
+        {!showAddPlayer && !showRosterPaste && (
           <button className="chip" title="Add player" onClick={() => setShowAddPlayer(true)}>
             +
+          </button>
+        )}
+        {!showAddPlayer && !showRosterPaste && (
+          <button className="chip" title="Paste roster" onClick={() => setShowRosterPaste(true)}>
+            + Paste roster
           </button>
         )}
         <button className="chip" title="General note" onClick={() => toggleNoteField(GENERAL_NOTE_KEY)}>
@@ -583,6 +599,41 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
           <button className="primary" onClick={handleAddPlayer}>
             Add
           </button>
+        </div>
+      )}
+
+      {showRosterPaste && (
+        <div style={{ marginBottom: 8 }}>
+          <textarea
+            className="lineup-textarea"
+            autoFocus
+            value={rosterPasteText}
+            onChange={(e) => setRosterPasteText(e.target.value)}
+            placeholder={'Paste from Obsidian, e.g.:\n8 - [[Yolande Mylene Zoua, 2010]] - '}
+          />
+          <div className="status" style={{ marginTop: 2 }}>
+            {(() => {
+              const n = parseRosterPaste(rosterPasteText).length
+              return n > 0 ? `Found ${n} player${n === 1 ? '' : 's'}.` : 'Paste lines like "8 - [[Name, Year]] - ".'
+            })()}
+          </div>
+          <div className="category-row" style={{ marginTop: 6 }}>
+            <button
+              className="primary"
+              disabled={parseRosterPaste(rosterPasteText).length === 0}
+              onClick={handleAddPlayersFromPaste}
+            >
+              Add parsed
+            </button>
+            <button
+              onClick={() => {
+                setShowRosterPaste(false)
+                setRosterPasteText('')
+              }}
+            >
+              Cancel
+            </button>
+          </div>
         </div>
       )}
 

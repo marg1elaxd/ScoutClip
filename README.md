@@ -293,6 +293,38 @@ they've just noticed and want available on the roster, without necessarily
 wanting a clip started that exact instant. Click their chip when actually
 ready, same as every other player.
 
+## Pasting a roster from Obsidian
+
+Typing a whole roster in one at a time is tedious when you already have it
+written down. **Paste roster instead** (Start Match, replacing the roster
+list before the match begins) and **+ Paste roster** (the in-match "+"
+row, popup and overlay both, adding to a match already running) both open a
+textarea instead of a single-name field.
+
+Built for the shape scouts commonly already keep a roster in Obsidian — one
+line per player, jersey number then a `[[Full Name, Birth Year]]` wikilink:
+
+```
+LEK:
+8 - [[Yolande Mylene Zoua, 2010]] -
+10 - [[Ange Anastasie Tazanou, 2010]] -
+
+DEA:
+18 - [[Paule Oceyane Nse Mvome, 2005]] -
+```
+
+`parseRosterPaste` (`src/lib/roster.ts`) pulls the number, last name, and
+year out of each matching line and turns it into a `"<number> <last name>
+<year>"` chip label (e.g. `8 Zoua 2010`) — last name only, not the full
+name, since that's what's actually useful to glance at on a chip mid-match.
+Team-header lines (`LEK:`, `DEA:`) and blank lines don't match the pattern
+and are silently skipped, so pasting a two-team block straight from
+Obsidian just works — both teams land in one flat roster, since the app has
+no team concept, only a per-match player list. A live "Found N players"
+count updates as you type/paste, and mid-match paste goes through a new
+bulk `ADD_PLAYERS` message (dedup against the existing roster, same as
+`ADD_PLAYER`) rather than one round trip per player.
+
 ## Game speed correction
 
 If you watch the broadcast at 2x, the recording is inherently 2x too fast

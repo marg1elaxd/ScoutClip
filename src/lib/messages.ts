@@ -15,6 +15,9 @@ export type Message =
   // recording them; an earlier version did that automatically, but not
   // every mid-match add means "clip them right now."
   | { type: 'ADD_PLAYER'; playerName: string }
+  // Bulk add — e.g. a pasted Obsidian-style roster (see lib/roster.ts).
+  // Same dedup-against-existing-roster behavior as ADD_PLAYER, just N at once.
+  | { type: 'ADD_PLAYERS'; playerNames: string[] }
   | { type: 'TOGGLE_CLOCK' }
   | { type: 'SET_CAPTURE_REGION'; region: CaptureRegion | null }
   | { type: 'SET_GAME_SPEED'; gameSpeed: number }
