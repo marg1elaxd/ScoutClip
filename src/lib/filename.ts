@@ -1,3 +1,5 @@
+import { subcategoryOf } from './actionType'
+
 /** Strip characters illegal in Windows/macOS filenames and folder names. */
 export function sanitizeSegment(segment: string): string {
   return segment.replace(/[\\/:*?"<>|]/g, '').trim()
@@ -38,15 +40,23 @@ export function buildClipFilename(opts: {
   return `${prefix}${parts.join(' - ')}.${opts.extension}`
 }
 
-/** `Downloads/ScoutClips/<Game>/<Player>/<clip>.<ext>` — the path chrome.downloads writes to. */
+/**
+ * `Downloads/ScoutClips/<Game>/<Player>/<Subcategory>/<clip>.<ext>` — the
+ * path chrome.downloads writes to. One folder per subcategory (e.g. "Pass",
+ * "Shot", "Untagged") rather than per top-level Offensive/Defensive
+ * category, since that's the granularity actually worth browsing into —
+ * sits alongside the player's `Compilations/` folder the same way.
+ */
 export function buildDownloadPath(opts: {
   matchInfo: string
   playerName: string
+  actionType: string | null
   filename: string
 }): string {
   const game = buildGameFolderName(opts.matchInfo)
   const player = buildPlayerFolderName(opts.playerName)
-  return `ScoutClips/${game}/${player}/${opts.filename}`
+  const subcategory = sanitizeSegment(subcategoryOf(opts.actionType)) || 'Untagged'
+  return `ScoutClips/${game}/${player}/${subcategory}/${opts.filename}`
 }
 
 /** `playerName` null means the selection spans more than one player. */

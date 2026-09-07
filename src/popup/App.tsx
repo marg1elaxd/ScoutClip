@@ -12,6 +12,7 @@ import {
 } from '../lib/types'
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
 import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
+import { formatPlayerTally } from '../lib/actionTally'
 import { parseRosterPaste } from '../lib/roster'
 import { formatMmSs } from '../lib/time'
 import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
@@ -801,7 +802,13 @@ export default function App() {
   }
 
   async function handleCopyRawNotes() {
-    const text = formatRawNotes(match.notes, match.players, settings.includeMinuteInNotes)
+    const text = formatRawNotes(
+      match.notes,
+      match.clips,
+      match.players,
+      settings.includeMinuteInNotes,
+      settings.actionCategories,
+    )
     try {
       await navigator.clipboard.writeText(text)
     } catch (err) {
@@ -811,7 +818,13 @@ export default function App() {
 
   async function handleCopyNotesFor(player: string | null) {
     const notes = match.notes.filter((n) => n.playerName === player)
-    const text = formatRawNotes(notes, player === null ? [] : [player], settings.includeMinuteInNotes)
+    const text = formatRawNotes(
+      notes,
+      match.clips,
+      player === null ? [] : [player],
+      settings.includeMinuteInNotes,
+      settings.actionCategories,
+    )
     try {
       await navigator.clipboard.writeText(text)
     } catch (err) {
@@ -1271,11 +1284,15 @@ export default function App() {
         <div className="clip-list">
           {[null, ...match.players].map((player) => {
             const playerNotes = match.notes.filter((n) => n.playerName === player)
-            if (playerNotes.length === 0) return null
+            const tally = player === null ? '' : formatPlayerTally(match.clips, player, settings.actionCategories)
+            if (playerNotes.length === 0 && !tally) return null
             return (
               <div key={player ?? GENERAL_NOTE_KEY} className="clip-group">
                 <div className="clip-group-header">
-                  <span>{player ?? GENERAL_NOTE_LABEL}</span>
+                  <span>
+                    {player ?? GENERAL_NOTE_LABEL}
+                    {tally && <span style={{ fontWeight: 400, color: '#7f8b94' }}> · {tally}</span>}
+                  </span>
                   <button className="icon-btn" title="Copy raw notes for this" aria-label="Copy raw notes for this" onClick={() => handleCopyNotesFor(player)}>
                     ⧉
                   </button>

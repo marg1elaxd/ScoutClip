@@ -533,6 +533,17 @@ warrant a clip, or context to go alongside one taken moments before/after.
   polished document on its own. Each group header (including General) also
   has its own small copy (⧉) button, for grabbing just that one player's —
   or just General's — notes without the rest of the match along with it.
+- **Recorded-clip tally** — each player's group header shows a running
+  tally of their recorded clips by subcategory next to their name, e.g.
+  `Zoua · Pass ×35 · Shot ×2 · Ground Duel ×5` (`formatPlayerTally` in
+  `src/lib/actionTally.ts`) — Untagged first if any, then each category's
+  subcategories in the order they're defined in Settings. A player shows up
+  here (tally only, no written notes needed) as soon as they have any
+  recorded clip. The same tally is appended to that player's line in the
+  raw-notes export/copy — `PlayerName - note one; note two | Pass ×35 ·
+  Shot ×2` — right there alongside their notes rather than off in a
+  separate section, since it's meant to travel with the notes wherever
+  they're pasted (Obsidian, an LLM prompt, etc).
 - **Match time display** — off by default; a Settings checkbox
   ("Show the match minute alongside each note") appends the match time as
   `(mm:ss)` to each note both in the review list and in the copied raw text.
@@ -966,7 +977,7 @@ For a production build use `npm run build` instead.
 Clips save via `chrome.downloads` to:
 
 ```
-Downloads/ScoutClips/<Game>/<Player>/<Player> - <Action> - <Match Info> - <N>min - #<ClipNumber>.mp4  (or .webm)
+Downloads/ScoutClips/<Game>/<Player>/<Subcategory>/<Player> - <Action> - <Match Info> - <N>min - #<ClipNumber>.mp4  (or .webm)
 ```
 
 `#<ClipNumber>` is that player's Nth clip in the match (1-based, from
@@ -975,6 +986,17 @@ clips tagged in the same match-minute from colliding, since minute alone
 isn't unique. Per-player rather than match-wide, since two different
 players recording in the same minute already land in separate folders and
 never collide anyway.
+
+`<Subcategory>` is one folder per specific action tag — `Pass/`, `Shot/`,
+`Ground Duel/`, `Untagged/`, etc. (`buildDownloadPath` in
+`src/lib/filename.ts`, using `subcategoryOf` from `src/lib/actionType.ts` to
+pull it out of the stored `"<Category> <Subcategory>"` actionType string) —
+rather than one folder per broad Offensive/Defensive category, since the
+subcategory is the granularity actually worth browsing into. Sits alongside
+that player's `Compilations/` folder the same way. The action tag is still
+in the filename too (a little redundant with the folder now, left as-is —
+harmless, and keeps the filename self-describing even if a clip gets moved
+or copied out of its folder).
 
 This is a deliberate Phase 1 tradeoff: recording runs in a headless
 **offscreen document** (so a clip survives the popup closing when the scout

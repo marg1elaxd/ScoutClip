@@ -9,6 +9,7 @@ import type {
   SavedClip,
 } from '../lib/types'
 import { exportNotesLive } from '../lib/noteExport'
+import { categoryOf } from '../lib/actionType'
 import { DEFAULT_SETTINGS, MAX_LINEUP_IMAGES, RECORDING_PROFILE } from '../lib/types'
 import {
   buildClipFilename,
@@ -147,11 +148,9 @@ function currentMinute(): number {
   return Math.floor(currentElapsedMs() / 60000)
 }
 
-/** Untagged first (per the scout's b-roll-style workflow), then Offensive, then Defensive. actionType is stored as "<Category> <Subcategory>" (see the tag panel), so the category is just its leading word. */
+/** Untagged first (per the scout's b-roll-style workflow), then Offensive, then Defensive. */
 function clipCategoryRank(actionType: string | null): number {
-  if (actionType == null) return 0
-  if (actionType.startsWith('Offensive')) return 1
-  return 2
+  return { Untagged: 0, Offensive: 1, Defensive: 2 }[categoryOf(actionType)]
 }
 
 /**
@@ -252,7 +251,7 @@ async function finalizePendingClip(clip: PendingClip, actionType: string | null,
       extension,
       starred,
     })
-    const path = buildDownloadPath({ matchInfo: clip.matchInfo, playerName: clip.playerName, filename })
+    const path = buildDownloadPath({ matchInfo: clip.matchInfo, playerName: clip.playerName, actionType, filename })
 
     const downloadId = await chrome.downloads.download({ url, filename: path, saveAs: false })
     console.log('[background] download queued', { downloadId, path, mimeType })
@@ -714,7 +713,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       persist()
       // Best-effort — never blocks or fails the note save itself, which has
       // already succeeded in extension storage above regardless of this.
-      lastNoteExportStatus = await exportNotesLive(match, settings.includeMinuteInNotes)
+      lastNoteExportStatus = await exportNotesLive(match, settings.includeMinuteInNotes, settings.actionCategories)
       persist()
       return snapshot()
     }

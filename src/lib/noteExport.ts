@@ -1,4 +1,4 @@
-import type { MatchState, NoteExportStatus } from './types'
+import type { ActionCategories, MatchState, NoteExportStatus } from './types'
 import { formatRawNotes } from './notes'
 import { sanitizeSegment } from './filename'
 import { checkFolderPermission, loadFolderHandle } from './folderHandleStore'
@@ -17,7 +17,11 @@ import { checkFolderPermission, loadFolderHandle } from './folderHandleStore'
  * Never throws — a failed export shouldn't fail the note save itself, which
  * already succeeded in extension storage regardless of this.
  */
-export async function exportNotesLive(match: MatchState, includeMinute: boolean): Promise<NoteExportStatus> {
+export async function exportNotesLive(
+  match: MatchState,
+  includeMinute: boolean,
+  categories: ActionCategories,
+): Promise<NoteExportStatus> {
   try {
     const handle = await loadFolderHandle()
     if (!handle) return { ok: false, detail: 'Not exported: no export folder set (Settings > Export folder).' }
@@ -30,7 +34,7 @@ export async function exportNotesLive(match: MatchState, includeMinute: boolean)
     const filename = `${sanitizeSegment(match.matchInfo) || 'Match'} - Notes.md`
     const fileHandle = await handle.getFileHandle(filename, { create: true })
     const writable = await fileHandle.createWritable()
-    const body = formatRawNotes(match.notes, match.players, includeMinute)
+    const body = formatRawNotes(match.notes, match.clips, match.players, includeMinute, categories)
     await writable.write(`# ${match.matchInfo || 'Match'}\n\n${body}\n`)
     await writable.close()
     return { ok: true, detail: `Exported to ${filename}` }
