@@ -42,12 +42,19 @@ const CROP_FPS = 30
 // recorder run on, and doing that as often as every 5s was causing a
 // periodic stutter in *every* concurrently recording clip, not just standby's
 // own buffer. A longer, fixed cadence cuts how often that cost is paid,
-// regardless of what pre-roll window the scout actually configured.
-const STANDBY_ROTATION_SECONDS = 15
+// regardless of what pre-roll window the scout actually configured. Widened
+// from 15s to 30s for the same reason, plus see recordingsInFlight below for
+// the complementary fix (skipping a rotation entirely while it would land in
+// footage actually being recorded, rather than just making it rarer).
+const STANDBY_ROTATION_SECONDS = 30
 // Enough trailing segments to cover the longest possible configured pre-roll
 // window (MAX_ROLL_SECONDS) even in the worst case — right after a fresh
 // rotation, with +1 segment of margin.
 const MAX_STANDBY_SEGMENTS = Math.ceil(MAX_ROLL_SECONDS / STANDBY_ROTATION_SECONDS) + 1
+// How soon to recheck after a scheduled rotation was skipped because a clip
+// was actively recording — short enough that standby's own history doesn't
+// fall too far behind its normal cadence once things go idle again.
+const DEFERRED_ROTATION_RECHECK_MS = 2000
 
 // ---- the underlying capture stream — persists across multiple clips/sessions while pre-roll is armed or any session is active ----
 let stream: MediaStream | null = null // raw tabCapture stream
@@ -64,6 +71,14 @@ interface ActiveSession {
 }
 const activeSessions = new Map<string, ActiveSession>()
 const pendingBlobs = new Map<string, Blob>() // sessionId -> finished clip awaiting OFFSCREEN_GET_CLIP
+// Which sessions' recorders are still genuinely capturing — unlike
+// activeSessions (removed from the instant Stop is clicked), this stays
+// populated through the post-roll tail too, since the recorder itself keeps
+// running until stopRecorderAndCollect actually resolves. Standby's
+// scheduled rotation checks this, not activeSessions, so it can skip a
+// rotation for as long as *any* clip's real footage is still being
+// captured — not just up to the moment Stop was clicked.
+const recordingsInFlight = new Set<string>()
 
 // ---- pre-roll standby ring buffer — one shared history, independent of any active session ----
 interface StandbySegment {
@@ -284,7 +299,25 @@ function startStandbySegment() {
   standbyRecorder = rec
   standbyChunks = chunksRef
   standbySegmentStartedAt = startedAt
-  standbyRotationTimer = setTimeout(rotateStandbySegment, STANDBY_ROTATION_SECONDS * 1000)
+  standbyRotationTimer = setTimeout(scheduledRotationTick, STANDBY_ROTATION_SECONDS * 1000)
+}
+
+/**
+ * Fires on the normal rotation cadence, but skips the actual (disruptive)
+ * rotation for as long as any clip is genuinely being recorded
+ * (recordingsInFlight), rechecking shortly after instead — see
+ * recordingsInFlight's own comment for why that's not the same thing as
+ * activeSessions being empty. Doesn't apply to rotateStandbySegmentNow,
+ * which still forces a rotation unconditionally when a click actually needs
+ * pre-roll coverage right now, regardless of what else is recording.
+ */
+function scheduledRotationTick() {
+  if (recordingsInFlight.size > 0) {
+    console.log('[offscreen] standby rotation deferred —', recordingsInFlight.size, 'clip(s) actively recording')
+    standbyRotationTimer = setTimeout(scheduledRotationTick, DEFERRED_ROTATION_RECHECK_MS)
+    return
+  }
+  rotateStandbySegment()
 }
 
 /**
@@ -422,6 +455,7 @@ async function startSession(
   }
   recorder.start()
   activeSessions.set(sessionId, { recorder, chunks, requestedAt, preRollSeconds })
+  recordingsInFlight.add(sessionId)
 }
 
 function stopRecorderAndCollect(rec: MediaRecorder, chunksRef: Blob[]): Promise<Blob> {
@@ -441,7 +475,16 @@ async function stopSession(sessionId: string, postRollMs: number, gameSpeed: num
   activeSessions.delete(sessionId)
 
   if (postRollMs > 0) await sleep(postRollMs)
-  const activeClipBlob = await stopRecorderAndCollect(session.recorder, session.chunks)
+  let activeClipBlob: Blob
+  try {
+    activeClipBlob = await stopRecorderAndCollect(session.recorder, session.chunks)
+  } finally {
+    // Only now — not back at activeSessions.delete above — is this player's
+    // recorder actually done capturing. Standby rotation checks this set,
+    // not activeSessions, specifically so it keeps deferring through the
+    // post-roll tail too, not just up to the Stop click.
+    recordingsInFlight.delete(sessionId)
+  }
   const ext = streamMimeType.startsWith('video/mp4') ? 'mp4' : 'webm'
 
   let pendingBlob: Blob

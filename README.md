@@ -750,7 +750,7 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
   - When pre-roll is enabled, **Start Match** also grabs a `tabCapture`
     stream for the active tab and arms continuous **standby buffering** in
     the offscreen document: a `MediaRecorder` runs the whole time, rotated
-    into fresh segments every `STANDBY_ROTATION_SECONDS` (a fixed 15s,
+    into fresh segments every `STANDBY_ROTATION_SECONDS` (a fixed 30s,
     [src/offscreen/offscreen.ts](src/offscreen/offscreen.ts)) so memory stays
     bounded (enough trailing segments are kept to cover the longest
     configurable pre-roll window — a few dozen MB at most, not the whole
@@ -769,6 +769,31 @@ as before. In **Settings** (⚙ on the Setup screen, or from the in-match
       lag every 5 seconds" with pre-roll set to 5s, which lined up exactly
       with the rotation cadence. A longer, fixed cadence cuts how often that
       cost is paid, independent of whatever pre-roll length is configured.
+      Widened again from 15s to 30s after the same stutter was still
+      noticeable (just rarer) at 15s — reported as "microfreezes...
+      appear[ing] randomly," which lined up with rotations landing wherever
+      they happened to fall relative to a clip.
+    - A longer cadence only reduces *how often* rotation's cost is paid — it
+      doesn't stop that cost from landing inside a clip that happens to be
+      recording at the moment a rotation fires. `recordingsInFlight` (a
+      separate tracking set from `activeSessions`, since a clip's recorder
+      keeps running through its post-roll tail even after `activeSessions`
+      already dropped it — see "Recording multiple players at once" above)
+      makes the scheduled rotation check first: if any clip is genuinely
+      being captured right now, skip this rotation and recheck in 2s instead
+      of doing the disruptive work immediately. Once nothing's actively
+      recording, it rotates and resumes the normal 30s cadence from there.
+      This can't help the *pre-roll* portion of a clip — standby keeps
+      rotating on schedule the rest of the time (most of a match, since
+      active recording only covers a small fraction of it), and that's
+      exactly the footage that later gets spliced in as pre-roll — but it
+      does mean a rotation can no longer land inside footage you're
+      currently, deliberately recording live. `rotateStandbySegmentNow` (the
+      *on-demand* forced rotation used when a click needs coverage the
+      standby history doesn't have yet) is unaffected by any of this — it
+      still fires immediately and unconditionally, since a new clip
+      genuinely needs that data right now regardless of what else is
+      recording.
   - Clicking a player's chip starts a normal clip recorder on the same
     already-open shared stream — no interaction with standby's own recorder
     at all, so there's no handoff/seam at that moment to worry about.
