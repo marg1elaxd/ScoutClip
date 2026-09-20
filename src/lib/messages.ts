@@ -1,4 +1,11 @@
-import type { CaptureRegion, MatchState, NoteExportStatus, RecordingSettings, RecordingStatus } from './types'
+import type {
+  CaptureRegion,
+  ClipOutcome,
+  MatchState,
+  NoteExportStatus,
+  RecordingSettings,
+  RecordingStatus,
+} from './types'
 
 // ---- popup/background <-> background/offscreen message protocol ----
 // Every message has a `type` discriminant so listeners can switch on it.
@@ -48,7 +55,7 @@ export type Message =
   // already open for another concurrently-recording player.
   | { type: 'START_RECORDING'; playerName: string; streamId?: string }
   | { type: 'STOP_RECORDING'; playerName: string }
-  | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null; starred: boolean }
+  | { type: 'CONFIRM_SAVE'; playerName: string; actionType: string | null; starred: boolean; outcome: ClipOutcome | null }
   // Cancels a clip awaiting a tag without saving/downloading it at all —
   // for "clipped by mistake, don't want it lingering." Only valid while
   // that player's clip is actually pending a tag.

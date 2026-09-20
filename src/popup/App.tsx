@@ -7,11 +7,12 @@ import {
   MAX_ROLL_SECONDS,
   MIN_ROLL_SECONDS,
   type ActionCategoryName,
+  type ClipOutcome,
   type RecordingSettings,
   type RecordingStatus,
 } from '../lib/types'
 import { openRegionPickerOnActiveTab } from '../lib/regionPicker'
-import { formatRawNotes, GENERAL_NOTE_LABEL } from '../lib/notes'
+import { formatRawNotes, GENERAL_NOTE_LABEL, playersWithNotesOrClips } from '../lib/notes'
 import { formatPlayerTally } from '../lib/actionTally'
 import { parseRosterPaste } from '../lib/roster'
 import { formatMmSs } from '../lib/time'
@@ -120,6 +121,10 @@ export default function App() {
   // clip — baked into the filename (HL prefix) at that point, since a
   // downloaded file can't be renamed after the fact.
   const [starredByPlayer, setStarredByPlayer] = useState<Record<string, boolean>>({})
+  // Successful/unsuccessful is chosen the same way (before the save click),
+  // optional, and toggles off if clicked again — not every action has a
+  // clean success/fail. Absent = not marked.
+  const [outcomeByPlayer, setOutcomeByPlayer] = useState<Record<string, ClipOutcome>>({})
   const [stoppingPlayers, setStoppingPlayers] = useState<Set<string>>(new Set())
   const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
   const [regionPickerBusy, setRegionPickerBusy] = useState(false)
@@ -735,6 +740,10 @@ export default function App() {
       const { [player]: _drop, ...rest } = prev
       return rest
     })
+    setOutcomeByPlayer((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
   }
 
   async function handleCompile() {
@@ -805,7 +814,7 @@ export default function App() {
     const text = formatRawNotes(
       match.notes,
       match.clips,
-      match.players,
+      playersWithNotesOrClips(match.players, match.notes, match.clips),
       settings.includeMinuteInNotes,
       settings.actionCategories,
     )
@@ -985,6 +994,7 @@ export default function App() {
           const countdown = stopCountdowns[p]
           const tagCategory = tagCategoryByPlayer[p] ?? null
           const starred = starredByPlayer[p] ?? false
+          const outcome = outcomeByPlayer[p] ?? null
           // stoppingPlayers covers the gap between clicking Stop and this
           // popup's own state actually reflecting it — the backend does set
           // 'stopping' immediately, but that's only visible to *other*
@@ -1030,6 +1040,22 @@ export default function App() {
                     {starred ? '★ Highlight' : '☆ Mark as highlight'}
                   </button>
                   <div className="category-row">
+                    {(['successful', 'unsuccessful'] as const).map((value) => (
+                      <button
+                        key={value}
+                        className={`outcome-btn ${value} ${outcome === value ? 'active' : ''}`}
+                        onClick={() =>
+                          setOutcomeByPlayer((prev) => {
+                            const { [p]: _drop, ...rest } = prev
+                            return outcome === value ? rest : { ...rest, [p]: value }
+                          })
+                        }
+                      >
+                        {value === 'successful' ? '✓ Successful' : '✗ Unsuccessful'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="category-row">
                     <button
                       className={tagCategory === 'Offensive' ? 'primary' : ''}
                       onClick={() => setTagCategoryByPlayer((prev) => ({ ...prev, [p]: 'Offensive' }))}
@@ -1049,7 +1075,7 @@ export default function App() {
                         <button
                           key={sub}
                           onClick={() => {
-                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}`, starred })
+                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}`, starred, outcome })
                             clearTagState(p)
                           }}
                         >
@@ -1062,7 +1088,7 @@ export default function App() {
                     <button
                       style={{ flex: 1 }}
                       onClick={() => {
-                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null, starred })
+                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null, starred, outcome })
                         clearTagState(p)
                       }}
                     >
@@ -1218,7 +1244,8 @@ export default function App() {
                           onChange={() => toggleClipSelected(clip.clipId)}
                         />
                         <span>
-                          {clip.starred ? '★ ' : ''}#{clip.clipNumber} · {clip.actionType ?? 'Untagged'} ·{' '}
+                          {clip.starred ? '★ ' : ''}
+                          {clip.outcome === 'successful' ? '✓ ' : clip.outcome === 'unsuccessful' ? '✗ ' : ''}#{clip.clipNumber} · {clip.actionType ?? 'Untagged'} ·{' '}
                           {formatMmSs(clip.timestampMs)}
                         </span>
                       </label>
@@ -1282,7 +1309,7 @@ export default function App() {
 
       {showNotes && match.notes.length > 0 && (
         <div className="clip-list">
-          {[null, ...match.players].map((player) => {
+          {[null, ...playersWithNotesOrClips(match.players, match.notes, match.clips)].map((player) => {
             const playerNotes = match.notes.filter((n) => n.playerName === player)
             const tally = player === null ? '' : formatPlayerTally(match.clips, player, settings.actionCategories)
             if (playerNotes.length === 0 && !tally) return null

@@ -1,5 +1,5 @@
 import type { ActionCategories, MatchState, NoteExportStatus } from './types'
-import { formatRawNotes } from './notes'
+import { formatRawNotes, playersWithNotesOrClips } from './notes'
 import { sanitizeSegment } from './filename'
 import { checkFolderPermission, loadFolderHandle } from './folderHandleStore'
 
@@ -34,7 +34,8 @@ export async function exportNotesLive(
     const filename = `${sanitizeSegment(match.matchInfo) || 'Match'} - Notes.md`
     const fileHandle = await handle.getFileHandle(filename, { create: true })
     const writable = await fileHandle.createWritable()
-    const body = formatRawNotes(match.notes, match.clips, match.players, includeMinute, categories)
+    const players = playersWithNotesOrClips(match.players, match.notes, match.clips)
+    const body = formatRawNotes(match.notes, match.clips, players, includeMinute, categories)
     await writable.write(`# ${match.matchInfo || 'Match'}\n\n${body}\n`)
     await writable.close()
     return { ok: true, detail: `Exported to ${filename}` }

@@ -539,7 +539,14 @@ warrant a clip, or context to go alongside one taken moments before/after.
   `src/lib/actionTally.ts`) — Untagged first if any, then each category's
   subcategories in the order they're defined in Settings. A player shows up
   here (tally only, no written notes needed) as soon as they have any
-  recorded clip. The same tally is appended to that player's line in the
+  recorded clip — including a player later deleted from the roster, whose
+  notes and clips stay (`playersWithNotesOrClips` in `src/lib/notes.ts`;
+  both this view and the export used to loop over the current roster alone,
+  so deleting someone silently made their notes vanish from both).
+  If clips were marked successful/unsuccessful at tag time (see "Marking
+  an outcome" below), each subcategory shows the split in brackets —
+  `Pass ×35 (28✓ / 7✗)`. Outcome is optional per clip, so `Shot ×2 (1✓)`
+  means one marked successful and the other unmarked, not failed. The same tally is appended to that player's line in the
   raw-notes export/copy — `PlayerName - note one; note two | Pass ×35 ·
   Shot ×2` — right there alongside their notes rather than off in a
   separate section, since it's meant to travel with the notes wherever
@@ -691,6 +698,14 @@ and storage strategy if that's wanted later.
   `chrome.downloads` has no way to rename a file after the fact. Starred
   clips show a ★ in the clip list and always sort first in a compilation
   regardless of the chosen order (see "Compilation" above).
+- **Marking an outcome** — the tag panel also has ✓ **Successful** /
+  ✗ **Unsuccessful** buttons below the highlight toggle. Optional (leave
+  both off for actions that don't have a clean success/fail, like off-ball
+  movement), and clicking the active one again clears it. Saved with the
+  clip as `outcome` and feeds the tally above; clips show a ✓/✗ in the clip
+  list. Deliberately kept in extension state only — not in the filename or
+  folder — so it's lost on New Session while the files themselves stay;
+  say so if you want it baked into the filename too.
 - **Discarding a clip you didn't mean to take** — the tag panel (popup and
   overlay both) has a **Discard** button next to "Save without tag." Unlike
   every other clip action, this never touches `chrome.downloads` at all —

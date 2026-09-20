@@ -1,5 +1,6 @@
 import type {
   CaptureRegion,
+  ClipOutcome,
   MatchState,
   MatchNote,
   NoteExportStatus,
@@ -223,7 +224,12 @@ function scheduleRevoke(downloadId: number, url: string) {
  * Shared by the normal tag-and-save flow and by the orphaned-clip safety net
  * in START_RECORDING, so a clip is never silently dropped either way.
  */
-async function finalizePendingClip(clip: PendingClip, actionType: string | null, starred: boolean): Promise<void> {
+async function finalizePendingClip(
+  clip: PendingClip,
+  actionType: string | null,
+  starred: boolean,
+  outcome: ClipOutcome | null,
+): Promise<void> {
   let clipUrl: string | null = null
   try {
     // Neither context has everything: chrome.downloads is unavailable in
@@ -269,6 +275,7 @@ async function finalizePendingClip(clip: PendingClip, actionType: string | null,
           timestampMs: clip.timestampMs,
           clipNumber,
           starred,
+          outcome,
           filename,
           path,
           extension,
@@ -517,7 +524,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         console.warn('[background] starting a new recording with an unresolved pending clip — auto-saving it as Untagged')
         const orphan = pendingClips[playerName]
         try {
-          await finalizePendingClip(orphan, null, false)
+          await finalizePendingClip(orphan, null, false, null)
         } catch (err) {
           console.error('[background] could not recover orphaned pending clip', err)
         }
@@ -598,7 +605,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'saving' }
       persist()
       try {
-        await finalizePendingClip(clip, message.actionType, message.starred)
+        await finalizePendingClip(clip, message.actionType, message.starred, message.outcome)
       } catch (err) {
         console.error('[background] save failed', err)
         playerRecordingStatus = { ...playerRecordingStatus, [playerName]: 'pending-tag' }
@@ -754,7 +761,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       // every player with a clip still awaiting a tag, not just one.
       for (const orphan of Object.values(pendingClips)) {
         try {
-          await finalizePendingClip(orphan, null, false)
+          await finalizePendingClip(orphan, null, false, null)
         } catch (err) {
           console.error('[background] could not recover orphaned pending clip during New Session', err)
         }

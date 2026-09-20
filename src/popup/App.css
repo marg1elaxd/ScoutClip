@@ -103,6 +103,20 @@ button.danger {
   margin-bottom: 8px;
 }
 
+.outcome-btn.successful.active {
+  background: #2e8b57;
+  border-color: #2e8b57;
+  color: white;
+  font-weight: 600;
+}
+
+.outcome-btn.unsuccessful.active {
+  background: #d1453b;
+  border-color: #d1453b;
+  color: white;
+  font-weight: 600;
+}
+
 .star-toggle.primary {
   background: #caa53d;
   border-color: #caa53d;

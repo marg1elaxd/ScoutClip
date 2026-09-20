@@ -5,6 +5,26 @@ import { formatPlayerTally } from './actionTally'
 export const GENERAL_NOTE_LABEL = 'General'
 
 /**
+ * The current roster, followed by anyone else who still has notes or clips
+ * (first-seen order) — i.e. a player deleted from the roster after the fact.
+ * Deleting a player only removes their chip; their saved notes and clips
+ * stay, and this is what keeps them from silently vanishing from the Notes
+ * view and the raw-notes export, both of which used to loop over the roster
+ * alone.
+ */
+export function playersWithNotesOrClips(roster: string[], notes: MatchNote[], clips: SavedClip[]): string[] {
+  const players = [...roster]
+  const seen = new Set(players)
+  for (const name of [...notes.map((n) => n.playerName), ...clips.map((c) => c.playerName)]) {
+    if (name != null && !seen.has(name)) {
+      seen.add(name)
+      players.push(name)
+    }
+  }
+  return players
+}
+
+/**
  * Formats a match's notes as flat, copy-paste-ready text — one line per
  * player (plus a "General" line for notes not tied to anyone), each a
  * semicolon-joined run of that player's notes in the order they were taken,

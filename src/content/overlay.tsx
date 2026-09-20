@@ -20,7 +20,7 @@
 import { createRoot } from 'react-dom/client'
 import { useEffect, useState } from 'react'
 import { sendMessage, type StateSnapshot } from '../lib/messages'
-import { MAX_LINEUP_IMAGES, type RecordingStatus } from '../lib/types'
+import { MAX_LINEUP_IMAGES, type ClipOutcome, type RecordingStatus } from '../lib/types'
 import { GENERAL_NOTE_LABEL } from '../lib/notes'
 import { parseRosterPaste } from '../lib/roster'
 import { readFileAsDataUrl, resizeImageDataUrl } from '../lib/image'
@@ -120,6 +120,8 @@ const OVERLAY_CSS = `
   .full { margin-top: 6px; width: 100%; }
   .star-toggle { margin-bottom: 6px; }
   .star-toggle.primary { background: #caa53d; border-color: #caa53d; color: #1a1400; }
+  .outcome-btn.successful.active { background: #2e8b57; border-color: #2e8b57; color: white; font-weight: 600; }
+  .outcome-btn.unsuccessful.active { background: #d1453b; border-color: #d1453b; color: white; font-weight: 600; }
   .status { margin-top: 6px; font-size: 11px; color: #9aa4ad; }
   .status.inline { margin-top: 0; }
   .error { margin-top: 6px; font-size: 11px; color: #ff8a80; }
@@ -145,6 +147,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [error, setError] = useState<string | null>(null)
   const [tagCategoryByPlayer, setTagCategoryByPlayer] = useState<Record<string, 'Offensive' | 'Defensive'>>({})
   const [starredByPlayer, setStarredByPlayer] = useState<Record<string, boolean>>({})
+  const [outcomeByPlayer, setOutcomeByPlayer] = useState<Record<string, ClipOutcome>>({})
   const [minimized, setMinimized] = useState(false)
   const [stoppingPlayers, setStoppingPlayers] = useState<Set<string>>(new Set())
   const [stopCountdowns, setStopCountdowns] = useState<Record<string, number>>({})
@@ -350,6 +353,10 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
       const { [player]: _drop, ...rest } = prev
       return rest
     })
+    setOutcomeByPlayer((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
   }
 
   async function handleDeletePlayer(player: string) {
@@ -471,6 +478,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
           const countdown = stopCountdowns[p]
           const tagCategory = tagCategoryByPlayer[p] ?? null
           const starred = starredByPlayer[p] ?? false
+          const outcome = outcomeByPlayer[p] ?? null
           // See the popup's identical comment: the backend's own 'stopping'
           // status isn't visible to this same caller until the whole
           // STOP_RECORDING call (including the post-roll wait) resolves.
@@ -513,6 +521,22 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                     {starred ? '★ Highlight' : '☆ Mark as highlight'}
                   </button>
                   <div className="category-row">
+                    {(['successful', 'unsuccessful'] as const).map((value) => (
+                      <button
+                        key={value}
+                        className={`outcome-btn ${value} ${outcome === value ? 'active' : ''}`}
+                        onClick={() =>
+                          setOutcomeByPlayer((prev) => {
+                            const { [p]: _drop, ...rest } = prev
+                            return outcome === value ? rest : { ...rest, [p]: value }
+                          })
+                        }
+                      >
+                        {value === 'successful' ? '✓ Successful' : '✗ Unsuccessful'}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="category-row">
                     <button
                       className={tagCategory === 'Offensive' ? 'primary' : ''}
                       onClick={() => setTagCategoryByPlayer((prev) => ({ ...prev, [p]: 'Offensive' }))}
@@ -532,7 +556,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                         <button
                           key={sub}
                           onClick={() => {
-                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}`, starred })
+                            call({ type: 'CONFIRM_SAVE', playerName: p, actionType: `${tagCategory} ${sub}`, starred, outcome })
                             clearTagState(p)
                           }}
                         >
@@ -544,7 +568,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                   <div className="category-row">
                     <button
                       onClick={() => {
-                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null, starred })
+                        call({ type: 'CONFIRM_SAVE', playerName: p, actionType: null, starred, outcome })
                         clearTagState(p)
                       }}
                     >

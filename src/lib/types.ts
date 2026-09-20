@@ -26,6 +26,13 @@ export interface CaptureRegion {
   viewportHeight: number
 }
 
+/**
+ * Whether the action in a clip came off — chosen in the tag panel, optional
+ * (null = not marked; plenty of actions like off-ball movement don't have a
+ * clean success/fail). Feeds the per-player tally, e.g. "Pass ×35 (28✓ / 7✗)".
+ */
+export type ClipOutcome = 'successful' | 'unsuccessful'
+
 /** A clip that has actually finished saving to disk, for the in-match clip list. */
 export interface SavedClip {
   playerName: string
@@ -38,6 +45,8 @@ export interface SavedClip {
   clipNumber: number
   /** Marked highlight-worthy in the tag panel at save time — baked into the filename (HL prefix) then, since a downloaded file can't be renamed after the fact. Always sorted first in a compilation regardless of the chosen order. */
   starred: boolean
+  /** Chosen in the tag panel alongside the tag itself; null = not marked. Kept in extension state only (not in the filename/folder) — feeds the per-player tally. */
+  outcome: ClipOutcome | null
   filename: string
   path: string
   extension: string
