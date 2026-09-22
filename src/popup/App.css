@@ -103,6 +103,62 @@ button.danger {
   margin-bottom: 8px;
 }
 
+.team-badge {
+  font-size: 10px;
+  padding: 2px 6px;
+  min-width: 20px;
+  text-align: center;
+}
+
+.position-input {
+  width: 42px;
+  box-sizing: border-box;
+  padding: 2px 4px;
+  font-size: 10px;
+  border: none;
+  background: transparent;
+  color: #e8ecef;
+  border-radius: 4px;
+  flex-shrink: 0;
+}
+
+.position-input::placeholder {
+  color: #3a444d;
+}
+
+.position-input:not(:placeholder-shown) {
+  background: #1a2027;
+  border: 1px solid #2b333a;
+}
+
+.position-input:focus {
+  background: #1a2027;
+  border: 1px solid #2f6feb;
+  outline: none;
+}
+
+.reorder-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.reorder-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 5px 8px;
+  background: #1a2027;
+  border-radius: 6px;
+  font-size: 12px;
+}
+
+.reorder-row button {
+  padding: 2px 8px;
+  font-size: 11px;
+}
+
 .outcome-btn.successful.active {
   background: #2e8b57;
   border-color: #2e8b57;
@@ -186,6 +242,7 @@ button:disabled {
 .player-chip-row {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: 4px;
 }
 

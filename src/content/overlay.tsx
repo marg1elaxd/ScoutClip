@@ -86,7 +86,15 @@ const OVERLAY_CSS = `
   .chip.selected { background: #2f6feb; border-color: #2f6feb; color: white; font-weight: 600; }
   .player-rows { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .player-record-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
-  .player-chip-row { display: flex; align-items: center; gap: 4px; }
+  .player-chip-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
+  .team-badge { font-size: 9px; padding: 2px 5px; min-width: 16px; text-align: center; }
+  .position-input { width: 36px; box-sizing: border-box; padding: 2px 3px; font-size: 9px; border: none; background: transparent; color: #e8ecef; border-radius: 4px; flex-shrink: 0; font-family: inherit; }
+  .position-input::placeholder { color: #3a444d; }
+  .position-input:not(:placeholder-shown) { background: #1a2027; border: 1px solid #2b333a; }
+  .position-input:focus { background: #1a2027; border: 1px solid #2f6feb; outline: none; }
+  .reorder-panel { display: flex; flex-direction: column; gap: 4px; margin-bottom: 8px; }
+  .reorder-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 7px; background: #1a2027; border-radius: 6px; font-size: 11px; }
+  .reorder-row button { padding: 1px 6px; font-size: 10px; }
   .note-fields { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; }
   .note-field-row { background: #1a2027; border: 1px solid #2b333a; border-radius: 8px; padding: 6px 8px; }
   .note-field-label { display: flex; align-items: center; justify-content: space-between; font-size: 10px; color: #9aa4ad; margin-bottom: 4px; }
@@ -155,6 +163,9 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [newPlayerName, setNewPlayerName] = useState('')
   const [showRosterPaste, setShowRosterPaste] = useState(false)
   const [rosterPasteText, setRosterPasteText] = useState('')
+  const [activeTeamFilters, setActiveTeamFilters] = useState<Set<string>>(new Set())
+  const [showReorderPlayers, setShowReorderPlayers] = useState(false)
+  const [positionDrafts, setPositionDrafts] = useState<Record<string, string>>({})
   // Note-taking: any number of note fields can be open at once (one per
   // player, plus at most one general), stacked above the roster rather than
   // inline per-chip, so writing a note never blocks clicking a chip to
@@ -283,9 +294,55 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   async function handleAddPlayersFromPaste() {
     const parsed = parseRosterPaste(rosterPasteText)
     if (parsed.length === 0) return
-    await call({ type: 'ADD_PLAYERS', playerNames: parsed })
+    const playerTeams: Record<string, string> = {}
+    for (const e of parsed) if (e.team) playerTeams[e.label] = e.team
+    await call({ type: 'ADD_PLAYERS', playerNames: parsed.map((e) => e.label), playerTeams })
     setRosterPasteText('')
     setShowRosterPaste(false)
+  }
+
+  function toggleTeamFilter(team: string) {
+    setActiveTeamFilters((prev) => {
+      const next = new Set(prev)
+      if (next.has(team)) next.delete(team)
+      else next.add(team)
+      return next
+    })
+  }
+
+  function cycleTeam(player: string) {
+    const known = Array.from(new Set(Object.values(match.playerTeams)))
+    const pair =
+      known.length >= 2
+        ? known.slice(0, 2)
+        : [...known, ...['Team A', 'Team B'].filter((t) => !known.includes(t))].slice(0, 2)
+    const current = match.playerTeams[player] ?? null
+    const next = current === null ? pair[0] : current === pair[0] ? pair[1] : null
+    call({ type: 'SET_PLAYER_TEAM', playerName: player, team: next })
+  }
+
+  async function handlePositionBlur(player: string) {
+    const value = (positionDrafts[player] ?? match.playerPositions[player] ?? '').trim()
+    if (value === (match.playerPositions[player] ?? '')) {
+      setPositionDrafts((prev) => {
+        const { [player]: _drop, ...rest } = prev
+        return rest
+      })
+      return
+    }
+    await call({ type: 'SET_PLAYER_POSITION', playerName: player, position: value })
+    setPositionDrafts((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
+  }
+
+  function movePlayer(from: number, to: number) {
+    if (to < 0 || to >= match.players.length) return
+    const next = [...match.players]
+    const [item] = next.splice(from, 1)
+    next.splice(to, 0, item)
+    call({ type: 'REORDER_PLAYERS', players: next })
   }
 
   function toggleNoteField(target: string) {
@@ -472,8 +529,51 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
         </div>
       )}
 
+      {(() => {
+        const knownTeams = Array.from(new Set(Object.values(match.playerTeams))).slice(0, 2)
+        if (knownTeams.length === 0) return null
+        return (
+          <div className="chips" style={{ marginBottom: 6 }}>
+            {knownTeams.map((team) => (
+              <button
+                key={team}
+                className={`chip ${activeTeamFilters.has(team) ? 'selected' : ''}`}
+                onClick={() => toggleTeamFilter(team)}
+              >
+                {team}
+              </button>
+            ))}
+          </div>
+        )
+      })()}
+
+      {showReorderPlayers && (
+        <div className="reorder-panel">
+          {match.players.map((p, i) => (
+            <div key={p} className="reorder-row">
+              <span>{p}</span>
+              <div>
+                <button disabled={i === 0} onClick={() => movePlayer(i, i - 1)} title="Move up" aria-label={`Move ${p} up`}>
+                  ↑
+                </button>
+                <button
+                  disabled={i === match.players.length - 1}
+                  onClick={() => movePlayer(i, i + 1)}
+                  title="Move down"
+                  aria-label={`Move ${p} down`}
+                >
+                  ↓
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="player-rows">
-        {match.players.map((p) => {
+        {match.players
+          .filter((p) => activeTeamFilters.size === 0 || activeTeamFilters.has(match.playerTeams[p] ?? ''))
+          .map((p) => {
           const status = statusFor(p)
           const countdown = stopCountdowns[p]
           const tagCategory = tagCategoryByPlayer[p] ?? null
@@ -496,6 +596,25 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
                   {p}
                   {status === 'saving' ? ' · saving…' : ''}
                 </button>
+                <button
+                  className="chip-remove team-badge"
+                  title={match.playerTeams[p] ? `Team: ${match.playerTeams[p]} (click to change)` : 'Assign team'}
+                  aria-label={`Team for ${p}`}
+                  onClick={() => cycleTeam(p)}
+                >
+                  {match.playerTeams[p] ? match.playerTeams[p].slice(0, 3) : '—'}
+                </button>
+                <input
+                  type="text"
+                  className="position-input"
+                  placeholder="pos"
+                  value={positionDrafts[p] ?? match.playerPositions[p] ?? ''}
+                  onChange={(e) => setPositionDrafts((prev) => ({ ...prev, [p]: e.target.value }))}
+                  onBlur={() => handlePositionBlur(p)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  }}
+                />
                 <button className="chip-remove" title="Add note" aria-label={`Note for ${p}`} onClick={() => toggleNoteField(p)}>
                   ✎
                 </button>
@@ -602,6 +721,15 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
         <button className="chip" title="General note" onClick={() => toggleNoteField(GENERAL_NOTE_KEY)}>
           ✎ General
         </button>
+        {match.players.length > 1 && (
+          <button
+            className={`chip ${showReorderPlayers ? 'selected' : ''}`}
+            title="Reorder players"
+            onClick={() => setShowReorderPlayers((s) => !s)}
+          >
+            ⇅
+          </button>
+        )}
       </div>
 
       {showAddPlayer && (

@@ -317,13 +317,46 @@ DEA:
 year out of each matching line and turns it into a `"<number> <last name>
 <year>"` chip label (e.g. `8 Zoua 2010`) — last name only, not the full
 name, since that's what's actually useful to glance at on a chip mid-match.
-Team-header lines (`LEK:`, `DEA:`) and blank lines don't match the pattern
-and are silently skipped, so pasting a two-team block straight from
-Obsidian just works — both teams land in one flat roster, since the app has
-no team concept, only a per-match player list. A live "Found N players"
-count updates as you type/paste, and mid-match paste goes through a new
-bulk `ADD_PLAYERS` message (dedup against the existing roster, same as
+Team-header lines (`LEK:`, `DEA:`) also get captured — see "Team toggles"
+below — and blank lines are silently skipped, so pasting a two-team block
+straight from Obsidian just works. A live "Found N players" count updates
+as you type/paste, and mid-match paste goes through a new bulk
+`ADD_PLAYERS` message (dedup against the existing roster, same as
 `ADD_PLAYER`) rather than one round trip per player.
+
+## Team toggles, reordering, and a position tag
+
+Three small additions to the live roster panel (popup and overlay both),
+none of which touch clips, filenames, or exports — purely display/filter
+aids on top of the same `match.players` list.
+
+- **Team toggles** — a pasted roster's `TEAM:` headers (see above) are
+  captured as each player's `playerTeams[name]`, and a row of up to two
+  toggle chips appears above the roster once any player has a team
+  assigned. Toggling one filters the chip row down to just that team;
+  toggling none shows everyone (the default). This filter is local to the
+  popup/overlay session — not sent to the background, resets each time
+  either reopens. A manually-added player starts unassigned; each chip
+  has a small badge (`—` when unassigned, otherwise the team name's first
+  three letters) that cycles unassigned → team 1 → team 2 → unassigned on
+  click (`cycleTeam`) — the pair is whichever two team labels are already
+  in use, or generic "Team A"/"Team B" if nothing's been tagged yet.
+- **Reordering** — an **⇅ Reorder** chip (shown once there are 2+ players)
+  opens a separate panel — a plain vertical list with ↑/↓ per player —
+  rather than drag-in-place, to keep the main chip row uncluttered and
+  because drag-and-drop inside a Shadow DOM overlay is a lot more fragile
+  to get right than two buttons. Moving updates `match.players`' order
+  directly (`REORDER_PLAYERS`, validated server-side as a permutation of
+  the current roster, not trusted blindly) — nothing else keys off array
+  position, so this is safe to reorder freely.
+- **Position tag** — a small inline textbox next to each chip
+  (`playerPositions[name]`), for something like "CB" or "LW" so you always
+  know who you're looking at without opening anything. Saved on blur, same
+  debouncing reasoning as the Lineup text field. Styled to be easy to
+  ignore when empty (no border/background, just a faint "pos" placeholder)
+  and become a small filled badge once it has content
+  (`:not(:placeholder-shown)` in CSS) — always there to click into, never
+  a big empty box competing for attention.
 
 ## Game speed correction
 

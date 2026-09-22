@@ -110,6 +110,7 @@ export default function App() {
   const [matchInfoInput, setMatchInfoInput] = useState('')
   const [playerInput, setPlayerInput] = useState('')
   const [rosterDraft, setRosterDraft] = useState<string[]>([])
+  const [rosterTeamsDraft, setRosterTeamsDraft] = useState<Record<string, string>>({})
   const [showRosterPaste, setShowRosterPaste] = useState(false)
   const [rosterPasteText, setRosterPasteText] = useState('')
   // Keyed by player name — each player's tag panel (and Stop's post-roll
@@ -156,6 +157,14 @@ export default function App() {
   const [showAddPlayer, setShowAddPlayer] = useState(false)
   const [newPlayerName, setNewPlayerName] = useState('')
   const [showMatchRosterPaste, setShowMatchRosterPaste] = useState(false)
+  // Team filter is purely a display filter on the roster panel — never
+  // synced to the background, resets each time the popup opens. Empty set
+  // means "no filter, show everyone."
+  const [activeTeamFilters, setActiveTeamFilters] = useState<Set<string>>(new Set())
+  const [showReorderPlayers, setShowReorderPlayers] = useState(false)
+  // Local typing buffer for the position textbox, same reasoning as the
+  // Lineup text field — sent to the background on blur, not per keystroke.
+  const [positionDrafts, setPositionDrafts] = useState<Record<string, string>>({})
   const [matchRosterPasteText, setMatchRosterPasteText] = useState('')
   const [retargeting, setRetargeting] = useState(false)
   // Note-taking: any number of note fields can be open at once (one per
@@ -517,7 +526,12 @@ export default function App() {
                 disabled={parseRosterPaste(rosterPasteText).length === 0}
                 onClick={() => {
                   const parsed = parseRosterPaste(rosterPasteText)
-                  setRosterDraft((r) => [...r, ...parsed.filter((p) => !r.includes(p))])
+                  setRosterDraft((r) => [...r, ...parsed.map((e) => e.label).filter((label) => !r.includes(label))])
+                  setRosterTeamsDraft((prev) => {
+                    const next = { ...prev }
+                    for (const e of parsed) if (e.team) next[e.label] = e.team
+                    return next
+                  })
                   setRosterPasteText('')
                   setShowRosterPaste(false)
                 }}
@@ -583,6 +597,7 @@ export default function App() {
               type: 'START_MATCH',
               matchInfo: matchInfoInput.trim(),
               players: rosterDraft,
+              playerTeams: rosterTeamsDraft,
               tabId: tab?.id,
               gameSpeed: gameSpeedInput,
             })
@@ -706,9 +721,60 @@ export default function App() {
   async function handleAddPlayersFromPaste() {
     const parsed = parseRosterPaste(matchRosterPasteText)
     if (parsed.length === 0) return
-    await call({ type: 'ADD_PLAYERS', playerNames: parsed })
+    const playerTeams: Record<string, string> = {}
+    for (const e of parsed) if (e.team) playerTeams[e.label] = e.team
+    await call({ type: 'ADD_PLAYERS', playerNames: parsed.map((e) => e.label), playerTeams })
     setMatchRosterPasteText('')
     setShowMatchRosterPaste(false)
+  }
+
+  function toggleTeamFilter(team: string) {
+    setActiveTeamFilters((prev) => {
+      const next = new Set(prev)
+      if (next.has(team)) next.delete(team)
+      else next.add(team)
+      return next
+    })
+  }
+
+  // Cycles unassigned -> team 1 -> team 2 -> unassigned. The pair is
+  // whatever two team labels are already in use (first-seen order) — from
+  // a pasted roster's headers, most of the time — falling back to generic
+  // "Team A"/"Team B" for the very first assignment if nothing's been
+  // tagged yet, so cycling works even without ever having pasted a roster.
+  function cycleTeam(player: string) {
+    const known = Array.from(new Set(Object.values(match.playerTeams)))
+    const pair =
+      known.length >= 2
+        ? known.slice(0, 2)
+        : [...known, ...['Team A', 'Team B'].filter((t) => !known.includes(t))].slice(0, 2)
+    const current = match.playerTeams[player] ?? null
+    const next = current === null ? pair[0] : current === pair[0] ? pair[1] : null
+    call({ type: 'SET_PLAYER_TEAM', playerName: player, team: next })
+  }
+
+  async function handlePositionBlur(player: string) {
+    const value = (positionDrafts[player] ?? match.playerPositions[player] ?? '').trim()
+    if (value === (match.playerPositions[player] ?? '')) {
+      setPositionDrafts((prev) => {
+        const { [player]: _drop, ...rest } = prev
+        return rest
+      })
+      return
+    }
+    await call({ type: 'SET_PLAYER_POSITION', playerName: player, position: value })
+    setPositionDrafts((prev) => {
+      const { [player]: _drop, ...rest } = prev
+      return rest
+    })
+  }
+
+  function movePlayer(from: number, to: number) {
+    if (to < 0 || to >= match.players.length) return
+    const next = [...match.players]
+    const [item] = next.splice(from, 1)
+    next.splice(to, 0, item)
+    call({ type: 'REORDER_PLAYERS', players: next })
   }
 
   function toggleClipSelected(clipId: string) {
@@ -988,8 +1054,51 @@ export default function App() {
         </div>
       )}
 
+      {(() => {
+        const knownTeams = Array.from(new Set(Object.values(match.playerTeams))).slice(0, 2)
+        if (knownTeams.length === 0) return null
+        return (
+          <div className="chips" style={{ marginTop: 0 }}>
+            {knownTeams.map((team) => (
+              <button
+                key={team}
+                className={`chip ${activeTeamFilters.has(team) ? 'selected' : ''}`}
+                onClick={() => toggleTeamFilter(team)}
+              >
+                {team}
+              </button>
+            ))}
+          </div>
+        )
+      })()}
+
+      {showReorderPlayers && (
+        <div className="reorder-panel">
+          {match.players.map((p, i) => (
+            <div key={p} className="reorder-row">
+              <span>{p}</span>
+              <div className="row" style={{ gap: 4 }}>
+                <button disabled={i === 0} onClick={() => movePlayer(i, i - 1)} title="Move up" aria-label={`Move ${p} up`}>
+                  ↑
+                </button>
+                <button
+                  disabled={i === match.players.length - 1}
+                  onClick={() => movePlayer(i, i + 1)}
+                  title="Move down"
+                  aria-label={`Move ${p} down`}
+                >
+                  ↓
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="player-rows">
-        {match.players.map((p) => {
+        {match.players
+          .filter((p) => activeTeamFilters.size === 0 || activeTeamFilters.has(match.playerTeams[p] ?? ''))
+          .map((p) => {
           const status = statusFor(p)
           const countdown = stopCountdowns[p]
           const tagCategory = tagCategoryByPlayer[p] ?? null
@@ -1015,6 +1124,25 @@ export default function App() {
                   {p}
                   {status === 'saving' ? ' · saving…' : ''}
                 </button>
+                <button
+                  className="icon-btn team-badge"
+                  title={match.playerTeams[p] ? `Team: ${match.playerTeams[p]} (click to change)` : 'Assign team'}
+                  aria-label={`Team for ${p}`}
+                  onClick={() => cycleTeam(p)}
+                >
+                  {match.playerTeams[p] ? match.playerTeams[p].slice(0, 3) : '—'}
+                </button>
+                <input
+                  type="text"
+                  className="position-input"
+                  placeholder="pos"
+                  value={positionDrafts[p] ?? match.playerPositions[p] ?? ''}
+                  onChange={(e) => setPositionDrafts((prev) => ({ ...prev, [p]: e.target.value }))}
+                  onBlur={() => handlePositionBlur(p)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                  }}
+                />
                 <button className="icon-btn" title="Add note" aria-label={`Note for ${p}`} onClick={() => toggleNoteField(p)}>
                   ✎
                 </button>
@@ -1123,6 +1251,15 @@ export default function App() {
         <button className="chip" title="General note" onClick={() => toggleNoteField(GENERAL_NOTE_KEY)}>
           ✎ General
         </button>
+        {match.players.length > 1 && (
+          <button
+            className={`chip ${showReorderPlayers ? 'selected' : ''}`}
+            title="Reorder players"
+            onClick={() => setShowReorderPlayers((s) => !s)}
+          >
+            ⇅ Reorder
+          </button>
+        )}
       </div>
 
       {showAddPlayer && (

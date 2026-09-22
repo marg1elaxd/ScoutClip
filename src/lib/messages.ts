@@ -16,7 +16,14 @@ export type Message =
   // canonical "broadcast tab", which is how the on-page overlay (a static
   // content script on every page) decides whether to render itself on any
   // given tab. See OVERLAY_SHOULD_SHOW below.
-  | { type: 'START_MATCH'; matchInfo: string; players: string[]; tabId?: number; gameSpeed: number }
+  | {
+      type: 'START_MATCH'
+      matchInfo: string
+      players: string[]
+      playerTeams?: Record<string, string>
+      tabId?: number
+      gameSpeed: number
+    }
   // Adds a player mid-match — just appends them to the roster (their chip
   // shows up, same as anyone from the original roster). Doesn't start
   // recording them; an earlier version did that automatically, but not
@@ -24,7 +31,17 @@ export type Message =
   | { type: 'ADD_PLAYER'; playerName: string }
   // Bulk add — e.g. a pasted Obsidian-style roster (see lib/roster.ts).
   // Same dedup-against-existing-roster behavior as ADD_PLAYER, just N at once.
-  | { type: 'ADD_PLAYERS'; playerNames: string[] }
+  | { type: 'ADD_PLAYERS'; playerNames: string[]; playerTeams?: Record<string, string> }
+  // Cycled by the chip's team badge (unassigned -> team A -> team B ->
+  // unassigned) or set from a pasted roster's headers — team null clears it.
+  | { type: 'SET_PLAYER_TEAM'; playerName: string; team: string | null }
+  // Typed directly next to the chip; empty/whitespace-only clears it (that's
+  // what makes the textbox stop showing).
+  | { type: 'SET_PLAYER_POSITION'; playerName: string; position: string }
+  // From the Reorder panel — the full new order, validated as a permutation
+  // of the current roster (same players, no adds/drops) rather than trusted
+  // blindly.
+  | { type: 'REORDER_PLAYERS'; players: string[] }
   | { type: 'TOGGLE_CLOCK' }
   | { type: 'SET_CAPTURE_REGION'; region: CaptureRegion | null }
   | { type: 'SET_GAME_SPEED'; gameSpeed: number }

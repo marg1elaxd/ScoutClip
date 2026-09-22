@@ -50,6 +50,8 @@ function defaultMatch(): MatchState {
     clips: [],
     notes: [],
     lineup: { text: '', imageDataUrls: [] },
+    playerTeams: {},
+    playerPositions: {},
   }
 }
 
@@ -329,6 +331,7 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         ...defaultMatch(),
         matchInfo: message.matchInfo,
         players: message.players,
+        playerTeams: message.playerTeams ?? {},
         matchActive: true,
         captureRegion: draftCaptureRegion,
         gameSpeed: message.gameSpeed || 1,
@@ -363,7 +366,37 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
         const name = raw.trim()
         if (name && !players.includes(name)) players.push(name)
       }
-      match = { ...match, players }
+      const playerTeams = { ...match.playerTeams, ...(message.playerTeams ?? {}) }
+      match = { ...match, players, playerTeams }
+      persist()
+      return snapshot()
+    }
+
+    case 'SET_PLAYER_TEAM': {
+      const playerTeams = { ...match.playerTeams }
+      if (message.team) playerTeams[message.playerName] = message.team
+      else delete playerTeams[message.playerName]
+      match = { ...match, playerTeams }
+      persist()
+      return snapshot()
+    }
+
+    case 'SET_PLAYER_POSITION': {
+      const playerPositions = { ...match.playerPositions }
+      const position = message.position.trim()
+      if (position) playerPositions[message.playerName] = position
+      else delete playerPositions[message.playerName]
+      match = { ...match, playerPositions }
+      persist()
+      return snapshot()
+    }
+
+    case 'REORDER_PLAYERS': {
+      const current = new Set(match.players)
+      const next = new Set(message.players)
+      const samePlayers = current.size === next.size && [...current].every((p) => next.has(p))
+      if (!samePlayers) throw new Error('Reordered roster must contain exactly the current players.')
+      match = { ...match, players: message.players }
       persist()
       return snapshot()
     }

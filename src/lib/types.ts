@@ -122,6 +122,20 @@ export interface MatchState {
   notes: MatchNote[]
   /** Scoped to the current match only, same as clips/notes — reset on the next START_MATCH. */
   lineup: MatchLineup
+  /**
+   * Player -> team label, purely a display/filter aid in the roster panel
+   * (which team toggle to show under, which pair a chip's team badge cycles
+   * through) — doesn't affect filenames/folders or anything else. Populated
+   * automatically from a pasted roster's "TEAM:" headers; unset for a
+   * manually-typed player until assigned via the chip's team badge.
+   */
+  playerTeams: Record<string, string>
+  /**
+   * Player -> position label (e.g. "CB", "LW"), typed directly next to
+   * their chip so it's always visible while scouting — purely a display
+   * aid, same as playerTeams. Absent/empty means nothing shows.
+   */
+  playerPositions: Record<string, string>
 }
 
 /** Common playback-speed increments a broadcast is likely to be watched at. */
