@@ -105,6 +105,11 @@ function CategoryEditor({
 
 export default function App() {
   const [state, setState] = useState<StateSnapshot | null>(null)
+  // Set when the initial GET_STATE fetch fails or never comes back — e.g.
+  // the background service worker got wedged after the computer slept with
+  // a match still running. Without this the popup just sat on "Loading…"
+  // forever with nothing to click, indistinguishable from a blank window.
+  const [loadError, setLoadError] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [tick, setTick] = useState(0)
   const [matchInfoInput, setMatchInfoInput] = useState('')
@@ -194,8 +199,27 @@ export default function App() {
   }, [lightboxImage])
 
   useEffect(() => {
-    sendMessage<StateSnapshot>({ type: 'GET_STATE' }).then(setState)
+    loadState()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // sendMessage can fail two ways: reject outright (e.g. "Could not
+  // establish connection", if the service worker isn't there to answer at
+  // all) or just never settle (if it's alive but wedged mid-handler) —
+  // Promise.race against a timeout covers both, since a rejection alone
+  // wouldn't catch the hang case.
+  async function loadState() {
+    setLoadError(null)
+    try {
+      const timeout = new Promise<never>((_, reject) =>
+        setTimeout(() => reject(new Error('No response from the extension after 5s.')), 5000),
+      )
+      const result = await Promise.race([sendMessage<StateSnapshot>({ type: 'GET_STATE' }), timeout])
+      setState(result)
+    } catch (err) {
+      setLoadError(err instanceof Error ? err.message : String(err))
+    }
+  }
 
   useEffect(() => {
     refreshFolderStatus()
@@ -301,6 +325,22 @@ export default function App() {
     await call({ type: 'SET_SETTINGS', settings: settingsDraft ?? state.settings })
     setSettingsDraft(null)
     setShowSettings(false)
+  }
+
+  if (loadError) {
+    return (
+      <div>
+        <div className="error-line">Couldn't reach the extension's background: {loadError}</div>
+        <div className="status-line">
+          This usually means the background service worker got stuck — often after the computer slept with a match
+          still running. Your data isn't affected by this screen either way; it's read from chrome.storage
+          separately. If Retry doesn't help, reload the extension at chrome://extensions.
+        </div>
+        <button className="primary full" onClick={loadState}>
+          Retry
+        </button>
+      </div>
+    )
   }
 
   if (!state) return <div>Loading…</div>

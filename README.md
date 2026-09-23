@@ -1237,6 +1237,39 @@ player it actually belonged to:
    remaining player's `pendingClips` entry the same way, so nothing is left
    behind purely because a different player's clip was the one still open.
 
+## When the popup opens blank
+
+The computer sleeping overnight with a match still active is enough to
+leave the background service worker (or the live `tabCapture`
+stream/offscreen document underneath it) in a wedged state — system sleep
+doesn't play nicely with either. Before this fix, the popup's very first
+action on open is a `GET_STATE` call, and the code had no `.catch()` on it
+at all: if that call rejected, or — worse — just never resolved (the
+service worker alive but stuck mid-handler), the popup sat on nothing
+forever, indistinguishable from a genuinely blank/broken window.
+
+`loadState` in [src/popup/App.tsx](src/popup/App.tsx) now races that call
+against a 5s timeout (covers both failure shapes — an outright rejection
+alone wouldn't catch a hang) and shows a visible error with a **Retry**
+button instead. This is purely about the popup's own error handling —
+it doesn't touch or risk anything already saved; your match state lives in
+`chrome.storage.session`/`chrome.storage.local` regardless of whether the
+popup can currently reach the background to read it.
+
+If you ever need your data *out* while this is happening — before
+reloading the extension or restarting the browser, either of which risks
+losing session-scoped state — `chrome://extensions` → **service worker**
+(under "Inspect views") opens DevTools for the background script directly,
+separate from the popup. From its console:
+
+```js
+chrome.storage.session.get('match', (r) => console.table(r.match.notes))
+```
+
+pulls notes straight out of storage; swap `.notes` for `.clips` for the
+clip list, or drop the `.table(...)` wrapper and `console.log` the whole
+`r.match` object to inspect everything at once.
+
 ## Known gaps before this is match-ready
 
 - No clip list / library view yet (Phase 2 territory, though the file
