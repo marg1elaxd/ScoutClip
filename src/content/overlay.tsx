@@ -88,6 +88,8 @@ const OVERLAY_CSS = `
   .player-record-row { display: flex; flex-direction: column; align-items: flex-start; gap: 4px; }
   .player-chip-row { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; }
   .team-badge { font-size: 9px; padding: 2px 5px; min-width: 16px; text-align: center; }
+  .team-toggle-group { display: inline-flex; align-items: center; gap: 2px; }
+  .team-rename-input { padding: 4px 7px; border-radius: 999px; border: 1px solid #2f6feb; background: #1a2027; color: #e8ecef; font-size: 11px; width: 90px; font-family: inherit; }
   .position-input { width: 36px; box-sizing: border-box; padding: 2px 3px; font-size: 9px; border: none; background: transparent; color: #e8ecef; border-radius: 4px; flex-shrink: 0; font-family: inherit; }
   .position-input::placeholder { color: #3a444d; }
   .position-input:not(:placeholder-shown) { background: #1a2027; border: 1px solid #2b333a; }
@@ -164,6 +166,7 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
   const [showRosterPaste, setShowRosterPaste] = useState(false)
   const [rosterPasteText, setRosterPasteText] = useState('')
   const [activeTeamFilters, setActiveTeamFilters] = useState<Set<string>>(new Set())
+  const [renamingTeam, setRenamingTeam] = useState<string | null>(null)
   const [showReorderPlayers, setShowReorderPlayers] = useState(false)
   const [positionDrafts, setPositionDrafts] = useState<Record<string, string>>({})
   // Note-taking: any number of note fields can be open at once (one per
@@ -306,6 +309,20 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
       const next = new Set(prev)
       if (next.has(team)) next.delete(team)
       else next.add(team)
+      return next
+    })
+  }
+
+  async function handleRenameTeam(oldName: string, newNameRaw: string) {
+    setRenamingTeam(null)
+    const newName = newNameRaw.trim()
+    if (!newName || newName === oldName) return
+    await call({ type: 'RENAME_TEAM', oldName, newName })
+    setActiveTeamFilters((prev) => {
+      if (!prev.has(oldName)) return prev
+      const next = new Set(prev)
+      next.delete(oldName)
+      next.add(newName)
       return next
     })
   }
@@ -534,15 +551,38 @@ function OverlayApp({ onClose }: { onClose: () => void }) {
         if (knownTeams.length === 0) return null
         return (
           <div className="chips" style={{ marginBottom: 6 }}>
-            {knownTeams.map((team) => (
-              <button
-                key={team}
-                className={`chip ${activeTeamFilters.has(team) ? 'selected' : ''}`}
-                onClick={() => toggleTeamFilter(team)}
-              >
-                {team}
-              </button>
-            ))}
+            {knownTeams.map((team) =>
+              renamingTeam === team ? (
+                <input
+                  key={team}
+                  className="team-rename-input"
+                  autoFocus
+                  defaultValue={team}
+                  onBlur={(e) => handleRenameTeam(team, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    if (e.key === 'Escape') setRenamingTeam(null)
+                  }}
+                />
+              ) : (
+                <div key={team} className="team-toggle-group">
+                  <button
+                    className={`chip ${activeTeamFilters.has(team) ? 'selected' : ''}`}
+                    onClick={() => toggleTeamFilter(team)}
+                  >
+                    {team}
+                  </button>
+                  <button
+                    className="chip-remove"
+                    title="Rename team"
+                    aria-label={`Rename ${team}`}
+                    onClick={() => setRenamingTeam(team)}
+                  >
+                    ✎
+                  </button>
+                </div>
+              ),
+            )}
           </div>
         )
       })()}

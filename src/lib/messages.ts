@@ -35,6 +35,10 @@ export type Message =
   // Cycled by the chip's team badge (unassigned -> team A -> team B ->
   // unassigned) or set from a pasted roster's headers — team null clears it.
   | { type: 'SET_PLAYER_TEAM'; playerName: string; team: string | null }
+  // Renames a team everywhere it's used (every player currently assigned
+  // oldName), not just one player's assignment — from the team toggle's
+  // own rename control.
+  | { type: 'RENAME_TEAM'; oldName: string; newName: string }
   // Typed directly next to the chip; empty/whitespace-only clears it (that's
   // what makes the textbox stop showing).
   | { type: 'SET_PLAYER_POSITION'; playerName: string; position: string }

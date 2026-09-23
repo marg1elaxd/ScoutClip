@@ -340,7 +340,11 @@ aids on top of the same `match.players` list.
   has a small badge (`—` when unassigned, otherwise the team name's first
   three letters) that cycles unassigned → team 1 → team 2 → unassigned on
   click (`cycleTeam`) — the pair is whichever two team labels are already
-  in use, or generic "Team A"/"Team B" if nothing's been tagged yet.
+  in use, or generic "Team A"/"Team B" if nothing's been tagged yet. The ✎
+  next to each toggle chip renames that team everywhere it's used
+  (`RENAME_TEAM` — every player currently assigned it, not just one), so a
+  paste-derived "LEK"/"DEA" or a generic "Team A" can be edited to
+  whatever's actually useful at any point, not just fixed at paste time.
 - **Reordering** — an **⇅ Reorder** chip (shown once there are 2+ players)
   opens a separate panel — a plain vertical list with ↑/↓ per player —
   rather than drag-in-place, to keep the main chip row uncluttered and

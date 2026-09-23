@@ -103,6 +103,22 @@ button.danger {
   margin-bottom: 8px;
 }
 
+.team-toggle-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.team-rename-input {
+  padding: 5px 8px;
+  border-radius: 999px;
+  border: 1px solid #2f6feb;
+  background: #1a2027;
+  color: #e8ecef;
+  font-size: 12px;
+  width: 100px;
+}
+
 .team-badge {
   font-size: 10px;
   padding: 2px 6px;

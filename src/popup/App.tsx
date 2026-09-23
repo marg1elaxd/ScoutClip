@@ -166,6 +166,7 @@ export default function App() {
   // synced to the background, resets each time the popup opens. Empty set
   // means "no filter, show everyone."
   const [activeTeamFilters, setActiveTeamFilters] = useState<Set<string>>(new Set())
+  const [renamingTeam, setRenamingTeam] = useState<string | null>(null)
   const [showReorderPlayers, setShowReorderPlayers] = useState(false)
   // Local typing buffer for the position textbox, same reasoning as the
   // Lineup text field — sent to the background on blur, not per keystroke.
@@ -777,6 +778,23 @@ export default function App() {
     })
   }
 
+  // Renames a team everywhere it's used (every player currently assigned
+  // it), not just one player's tag — editable at any time, not just fixed
+  // from a paste's headers or the generic "Team A"/"Team B" fallback.
+  async function handleRenameTeam(oldName: string, newNameRaw: string) {
+    setRenamingTeam(null)
+    const newName = newNameRaw.trim()
+    if (!newName || newName === oldName) return
+    await call({ type: 'RENAME_TEAM', oldName, newName })
+    setActiveTeamFilters((prev) => {
+      if (!prev.has(oldName)) return prev
+      const next = new Set(prev)
+      next.delete(oldName)
+      next.add(newName)
+      return next
+    })
+  }
+
   // Cycles unassigned -> team 1 -> team 2 -> unassigned. The pair is
   // whatever two team labels are already in use (first-seen order) — from
   // a pasted roster's headers, most of the time — falling back to generic
@@ -1099,15 +1117,38 @@ export default function App() {
         if (knownTeams.length === 0) return null
         return (
           <div className="chips" style={{ marginTop: 0 }}>
-            {knownTeams.map((team) => (
-              <button
-                key={team}
-                className={`chip ${activeTeamFilters.has(team) ? 'selected' : ''}`}
-                onClick={() => toggleTeamFilter(team)}
-              >
-                {team}
-              </button>
-            ))}
+            {knownTeams.map((team) =>
+              renamingTeam === team ? (
+                <input
+                  key={team}
+                  className="team-rename-input"
+                  autoFocus
+                  defaultValue={team}
+                  onBlur={(e) => handleRenameTeam(team, e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') (e.target as HTMLInputElement).blur()
+                    if (e.key === 'Escape') setRenamingTeam(null)
+                  }}
+                />
+              ) : (
+                <div key={team} className="team-toggle-group">
+                  <button
+                    className={`chip ${activeTeamFilters.has(team) ? 'selected' : ''}`}
+                    onClick={() => toggleTeamFilter(team)}
+                  >
+                    {team}
+                  </button>
+                  <button
+                    className="icon-btn"
+                    title="Rename team"
+                    aria-label={`Rename ${team}`}
+                    onClick={() => setRenamingTeam(team)}
+                  >
+                    ✎
+                  </button>
+                </div>
+              ),
+            )}
           </div>
         )
       })()}

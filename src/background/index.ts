@@ -381,6 +381,18 @@ async function handle(message: Message, sender?: chrome.runtime.MessageSender): 
       return snapshot()
     }
 
+    case 'RENAME_TEAM': {
+      const newName = message.newName.trim()
+      if (!newName) throw new Error('Team name cannot be empty.')
+      const playerTeams = { ...match.playerTeams }
+      for (const [playerName, team] of Object.entries(playerTeams)) {
+        if (team === message.oldName) playerTeams[playerName] = newName
+      }
+      match = { ...match, playerTeams }
+      persist()
+      return snapshot()
+    }
+
     case 'SET_PLAYER_POSITION': {
       const playerPositions = { ...match.playerPositions }
       const position = message.position.trim()
