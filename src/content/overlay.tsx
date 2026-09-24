@@ -34,6 +34,9 @@ const OVERLAY_CSS = `
   :host, * { box-sizing: border-box; }
   .panel {
     width: 240px;
+    max-height: calc(100vh - 32px);
+    overflow-y: auto;
+    box-sizing: border-box;
     font-family: system-ui, -apple-system, Segoe UI, sans-serif;
     font-size: 12px;
     background: #101418;

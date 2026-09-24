@@ -493,6 +493,12 @@ popup window.
 - **Appears automatically** once a match is started from the popup (no
   separate "show overlay" step) — bottom-right corner, minimizable to a
   small pill, closable with ✕.
+- **Scrolls instead of running off-screen** — the panel's bottom edge is
+  pinned 16px above the corner, so as content grows (a big roster, several
+  note fields open, the lineup panel) it was growing *upward* with nothing
+  stopping it, pushing the header and top rows off the top of the screen
+  with no way to reach them. `.panel` now caps at `calc(100vh - 32px)` with
+  `overflow-y: auto`, so it scrolls internally instead.
 - **Starting a match pushes activation directly to the tab**
   (`chrome.tabs.sendMessage(matchTabId, { type: 'OVERLAY_ACTIVATE' })` in
   `START_MATCH`, handled by a listener in overlay.tsx) rather than relying
